@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --font-display: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-body: "IBM Plex Mono", "SFMono-Regular", "Menlo", "Monaco", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(220, 38, 38, 0.2), transparent 28%),
+    radial-gradient(circle at top right, rgba(68, 64, 60, 0.26), transparent 24%),
+    linear-gradient(180deg, #050505 0%, #0b0b0c 42%, #020202 100%);
+  color: #e2e8f0;
+  font-family: var(--font-body), monospace;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display), sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(239, 68, 68, 0.35);
+}
+
+.agent-markdown > :first-child {
+  margin-top: 0;
+}
+
+.agent-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+@page {
+  margin: 0.7in;
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #111111 !important;
+    font-family: "Georgia", "Times New Roman", serif;
+  }
+
+  .print-report-header h1,
+  .print-report-header p,
+  .agent-panel,
+  .agent-panel * {
+    color: #111111 !important;
+  }
+
+  .print-report-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  .agent-panel {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  .agent-panel-body {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .agent-markdown a {
+    color: #111111 !important;
+    text-decoration-color: #666666 !important;
+  }
+
+  .agent-markdown li::before {
+    background: #111111 !important;
+  }
+}
