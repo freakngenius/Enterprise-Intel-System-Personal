@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="beam" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7fd0ff" />
+      <stop offset="100%" stop-color="#2d62ff" />
+    </linearGradient>
+    <linearGradient id="redTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff7a7a" />
+      <stop offset="100%" stop-color="#ff4d5f" />
+    </linearGradient>
+    <linearGradient id="redSideL" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ff3f47" />
+      <stop offset="100%" stop-color="#d31d2c" />
+    </linearGradient>
+    <linearGradient id="redSideR" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffb300" />
+      <stop offset="100%" stop-color="#f28a00" />
+    </linearGradient>
+    <linearGradient id="yellowTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff46c" />
+      <stop offset="100%" stop-color="#fff100" />
+    </linearGradient>
+    <linearGradient id="yellowSide" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffe300" />
+      <stop offset="100%" stop-color="#cfbc00" />
+    </linearGradient>
+    <linearGradient id="greenTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b5ef74" />
+      <stop offset="100%" stop-color="#87d64d" />
+    </linearGradient>
+    <linearGradient id="greenSide" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#78c93e" />
+      <stop offset="100%" stop-color="#5aa71a" />
+    </linearGradient>
+    <linearGradient id="purpleTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d18aff" />
+      <stop offset="100%" stop-color="#ad5eff" />
+    </linearGradient>
+    <linearGradient id="purpleSide" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#a657ea" />
+      <stop offset="100%" stop-color="#8632cb" />
+    </linearGradient>
+    <linearGradient id="cyanTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6ff7ff" />
+      <stop offset="100%" stop-color="#27d9f2" />
+    </linearGradient>
+    <linearGradient id="cyanSide" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#28d6f2" />
+      <stop offset="100%" stop-color="#14b6d6" />
+    </linearGradient>
+    <linearGradient id="magentaTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff71ff" />
+      <stop offset="100%" stop-color="#f235f2" />
+    </linearGradient>
+    <linearGradient id="magentaSide" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ef30f2" />
+      <stop offset="100%" stop-color="#c516cb" />
+    </linearGradient>
+    <linearGradient id="blueTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#84a2ff" />
+      <stop offset="100%" stop-color="#5b78ff" />
+    </linearGradient>
+    <linearGradient id="blueSide" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4b67ff" />
+      <stop offset="100%" stop-color="#3148d6" />
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="256" height="256" fill="#000" />
+
+  <g stroke="url(#beam)" stroke-linecap="round" filter="url(#glow)">
+    <path d="M128 72 L128 100" stroke-width="6" />
+    <path d="M90 108 L118 123" stroke-width="6" />
+    <path d="M166 108 L138 123" stroke-width="6" />
+    <path d="M90 170 L118 155" stroke-width="6" />
+    <path d="M166 170 L138 155" stroke-width="6" />
+    <path d="M128 156 L128 198" stroke-width="6" />
+  </g>
+
+  <g stroke="#000" stroke-width="3" stroke-linejoin="round">
+    <g transform="translate(128 42)">
+      <polygon points="0,-18 30,0 0,18 -30,0" fill="url(#redTop)" />
+      <polygon points="-30,0 -30,38 0,56 0,18" fill="url(#redSideL)" />
+      <polygon points="30,0 30,38 0,56 0,18" fill="url(#redSideR)" />
+      <polygon points="0,-6 13,0 0,8 -13,0" fill="#000" />
+    </g>
+    <g transform="translate(62 82)">
+      <polygon points="0,-18 30,0 0,18 -30,0" fill="url(#yellowTop)" />
+      <polygon points="-30,0 -30,38 0,56 0,18" fill="url(#yellowSide)" />
+      <polygon points="30,0 30,38 0,56 0,18" fill="url(#yellowTop)" />
+      <polygon points="0,-6 13,0 0,8 -13,0" fill="#000" />
+    </g>
+    <g transform="translate(194 82)">
+      <polygon points="0,-18 30,0 0,18 -30,0" fill="url(#greenTop)" />
+      <polygon points="-30,0 -30,38 0,56 0,18" fill="url(#greenSide)" />
+      <polygon points="30,0 30,38 0,56 0,18" fill="url(#greenTop)" />
+      <polygon points="0,-6 13,0 0,8 -13,0" fill="#000" />
+    </g>
+    <g transform="translate(128 122)">
+      <polygon points="0,-18 30,0 0,18 -30,0" fill="url(#purpleTop)" />
+      <polygon points="-30,0 -30,38 0,56 0,18" fill="url(#purpleSide)" />
+      <polygon points="30,0 30,38 0,56 0,18" fill="url(#purpleTop)" />
+      <polygon points="0,-6 13,0 0,8 -13,0" fill="#000" />
+    </g>
+    <g transform="translate(62 176)">
+      <polygon points="0,-18 30,0 0,18 -30,0" fill="url(#cyanTop)" />
+      <polygon points="-30,0 -30,38 0,56 0,18" fill="url(#cyanSide)" />
+      <polygon points="30,0 30,38 0,56 0,18" fill="url(#cyanTop)" />
+      <polygon points="0,-6 13,0 0,8 -13,0" fill="#000" />
+    </g>
+    <g transform="translate(128 214)">
+      <polygon points="0,-18 30,0 0,18 -30,0" fill="url(#magentaTop)" />
+      <polygon points="-30,0 -30,38 0,56 0,18" fill="url(#magentaSide)" />
+      <polygon points="30,0 30,38 0,56 0,18" fill="url(#magentaTop)" />
+      <polygon points="0,-6 13,0 0,8 -13,0" fill="#000" />
+    </g>
+    <g transform="translate(194 176)">
+      <polygon points="0,-18 30,0 0,18 -30,0" fill="url(#blueTop)" />
+      <polygon points="-30,0 -30,38 0,56 0,18" fill="url(#blueSide)" />
+      <polygon points="30,0 30,38 0,56 0,18" fill="url(#blueTop)" />
+      <polygon points="0,-6 13,0 0,8 -13,0" fill="#000" />
+    </g>
+  </g>
+</svg>
