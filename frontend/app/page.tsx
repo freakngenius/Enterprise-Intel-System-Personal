@@ -2913,13 +2913,10 @@ export default function Home() {
               <aside className="hidden w-[248px] shrink-0 flex-col border-r border-[#262624] bg-[#0f0e0c] lg:flex">
                 <div className="border-b border-[#262624] px-5 py-5">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="flex h-10 w-10 items-center justify-center border border-[#2c2a27] bg-[#181715] text-sm font-semibold text-[#f3f1ea]"
-                      style={SURFACE_RADIUS_STYLE}
-                    >
+                    <div className="flex h-[45px] w-[45px] shrink-0 items-center justify-center">
                       <img
                         alt="Enterprise Intel System logo"
-                        className="h-8 w-8 object-contain"
+                        className="h-[45px] w-[45px] object-contain"
                         src="/icon.svg"
                       />
                     </div>
