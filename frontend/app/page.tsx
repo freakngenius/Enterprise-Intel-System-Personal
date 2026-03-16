@@ -2916,7 +2916,7 @@ export default function Home() {
                     <div className="flex h-[45px] w-[45px] shrink-0 items-center justify-center">
                       <img
                         alt="Enterprise Intel System logo"
-                        className="h-[42px] w-[42px] object-contain"
+                        className="h-[38px] w-[38px] object-contain"
                         src="/brand-mark.svg?v=20260316"
                       />
                     </div>
