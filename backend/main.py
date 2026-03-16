@@ -17,7 +17,7 @@ from openai.types.responses import ResponseTextDeltaEvent
 from pypdf import PdfReader
 from pydantic import BaseModel, Field
 
-from backend.agents import (
+from backend.intel_agents import (
     SPECIALIST_AGENTS,
     chart_agent,
     research_agent,
