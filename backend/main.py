@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 from dataclasses import dataclass
 from io import BytesIO
@@ -9,7 +10,7 @@ from typing import Any, AsyncIterator
 from agents import Agent, Runner
 from docx import Document
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
@@ -27,7 +28,6 @@ from intel_agents import (
 from comparison_agents import comparison_agent, context_agent
 
 load_dotenv(Path(__file__).with_name(".env"))
-openai_client = OpenAI()
 
 TRIAGE_RESULT_TOKEN = "[TRIAGE_RESULT]"
 HANDOFF_RESEARCH_TOKEN = "[HANDOFF_RESEARCH]"
@@ -124,6 +124,14 @@ def format_sse(event: str, data: Any) -> str:
     lines = payload.splitlines() or [""]
     body = "".join(f"data: {line}\n" for line in lines)
     return f"event: {event}\n{body}\n"
+
+
+def build_openai_client(api_key: str | None = None) -> OpenAI:
+    resolved_api_key = (api_key or "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+    if not resolved_api_key:
+        raise RuntimeError("OpenAI API key is required for company resolution.")
+
+    return OpenAI(api_key=resolved_api_key)
 
 
 def extract_usage(result: Any) -> dict[str, int]:
@@ -581,9 +589,12 @@ async def run_specialist_agent(
     return AgentRunCapture(agent_key=agent_key, output=output.strip(), result=streamed_result)
 
 
-async def resolve_company_matches(company_name: str, mode: str) -> dict[str, Any]:
+async def resolve_company_matches(
+    company_name: str, mode: str, api_key: str | None = None
+) -> dict[str, Any]:
     def _run_completion() -> dict[str, Any]:
-        response = openai_client.chat.completions.create(
+        client = build_openai_client(api_key)
+        response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
                 {
@@ -1054,9 +1065,10 @@ async def compare(
 
 
 @app.post("/resolve-company")
-async def resolve_company(data: ResolveCompanyRequest) -> dict[str, Any]:
+async def resolve_company(data: ResolveCompanyRequest, request: Request) -> dict[str, Any]:
+    api_key = request.headers.get("X-API-Key")
     try:
-        result = await resolve_company_matches(data.company_name, data.mode)
+        result = await resolve_company_matches(data.company_name, data.mode, api_key=api_key)
     except Exception:
         return {"matches": []}
 
