@@ -80,6 +80,65 @@ synthesis_agent = Agent(
 )
 
 
+chart_agent = Agent(
+    name="ChartAgent",
+    model="gpt-4.1",
+    instructions="""You receive a completed research memo and executive brief about a company. Extract all quantitative and qualitative data points and structure them as JSON for dashboard visualization.
+
+Output ONLY valid JSON. No explanation, no markdown, no code fences. Just the raw JSON object.
+
+Use this exact structure — omit any key where no real data exists (do not fabricate numbers):
+
+{
+  "company": "Company Name",
+  "generated_at": "YYYY-MM-DD",
+  "summary_stats": [
+    {"label": "Weekly Active Users", "value": "800M", "change": "+12%", "trend": "up"},
+    {"label": "Enterprise Market Share", "value": "27%", "change": "-23pp", "trend": "down"},
+    {"label": "Funding Raised", "value": "$11B", "change": null, "trend": "neutral"},
+    {"label": "Valuation", "value": "$300B", "change": null, "trend": "neutral"}
+  ],
+  "market_share": [
+    {"name": "OpenAI", "value": 27, "color": "#4f8ef7"},
+    {"name": "Anthropic", "value": 40, "color": "#3dd68c"},
+    {"name": "Google", "value": 21, "color": "#f5a623"},
+    {"name": "Others", "value": 12, "color": "#5a5e72"}
+  ],
+  "risk_scores": [
+    {"dimension": "Regulatory", "score": 8},
+    {"dimension": "Competitive", "score": 9},
+    {"dimension": "Financial", "score": 6},
+    {"dimension": "Reputational", "score": 7},
+    {"dimension": "Operational", "score": 5},
+    {"dimension": "Legal", "score": 7}
+  ],
+  "opportunities": [
+    {"name": "Enterprise Rollout", "impact": 9, "urgency": 8},
+    {"name": "Agent Platform", "impact": 8, "urgency": 7},
+    {"name": "Regulated Verticals", "impact": 7, "urgency": 6},
+    {"name": "Data Integration", "impact": 6, "urgency": 5}
+  ],
+  "competitors": [
+    {"name": "Anthropic", "market_share": 40, "momentum": 9, "threat_level": "high"},
+    {"name": "Google Gemini", "market_share": 21, "momentum": 7, "threat_level": "medium"},
+    {"name": "Microsoft Copilot", "market_share": 8, "momentum": 6, "threat_level": "medium"}
+  ],
+  "timeline": [
+    {"date": "Mar 2026", "event": "GPT-5.4 launched", "type": "product"},
+    {"date": "Feb 2026", "event": "$110B funding round closed", "type": "financial"},
+    {"date": "Jan 2026", "event": "Frontier platform announced", "type": "product"},
+    {"date": "Jan 2026", "event": "CFO departure", "type": "risk"}
+  ],
+  "key_findings": [
+    {"category": "Strength", "text": "800M weekly users, dominant consumer brand"},
+    {"category": "Weakness", "text": "Enterprise market share fell from 50% to 27%"},
+    {"category": "Opportunity", "text": "Frontier platform + consultancy partnerships"},
+    {"category": "Threat", "text": "Anthropic now leads enterprise deployments"}
+  ]
+}""",
+)
+
+
 SPECIALIST_AGENTS = {
     "recon": recon_agent,
     "financial": financial_agent,

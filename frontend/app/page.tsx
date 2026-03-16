@@ -1,11 +1,18 @@
 "use client";
 
+// NOTE: No API keys are hardcoded. User-provided keys can be stored in
+// localStorage under 'eis_api_key'. To reset: clear localStorage.removeItem(
+// 'eis_api_key') or use the Settings menu in the top-right UI.
+
+import Dashboard, { type DashboardData } from "../components/Dashboard";
 import {
+  BarChart3,
   BookOpen,
   Brain,
   FileSearch,
   GitCompare,
   Search,
+  Settings,
   ShieldAlert,
   Sparkles,
   Swords,
@@ -14,6 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ChangeEvent,
   CSSProperties,
@@ -35,6 +43,7 @@ const TRIAGE_RESULT_TOKEN = "[TRIAGE_RESULT]";
 const HANDOFF_RESEARCH_TOKEN = "[HANDOFF_RESEARCH]";
 const HANDOFF_COMPARISON_TOKEN = "[HANDOFF_COMPARISON]";
 const HANDOFF_SYNTHESIS_TOKEN = "[HANDOFF_SYNTHESIS]";
+const CHART_DATA_TOKEN = "[CHART_DATA]";
 const USAGE_TOKEN = "[USAGE]";
 const SURFACE_RADIUS = "3px";
 const SURFACE_RADIUS_STYLE = { borderRadius: SURFACE_RADIUS } as const;
@@ -45,8 +54,25 @@ const ASSEMBLY_MESSAGE_MS = 1000;
 const SCROLL_DELAY_MS = 300;
 const CONNECTOR_FLASH_MS = 1400;
 const ACCEPTED_FILE_EXTENSIONS = [".pdf", ".docx", ".csv", ".txt"];
+const COMPARE_FOCUS_OPTIONS = [
+  "Business Model",
+  "Pricing Strategy",
+  "Product Roadmap",
+  "Features & Capabilities",
+  "Company Size",
+  "Funds Raised & Stage",
+  "Marketing & GTM",
+  "Target Demographics",
+  "Technology Stack",
+  "Talent & Culture",
+  "Regulatory & Compliance",
+  "Other",
+] as const;
+const OTHER_COMPARE_FOCUS = "Other";
+const REPORT_STORAGE_KEY = "eis_reports";
 
 type Mode = "intel" | "compare";
+type ActiveView = "intel" | "dashboard" | "reports" | "research";
 type RosterPhase = "idle" | "scanning" | "triage" | "assembled";
 type StreamStage = "idle" | "context" | "research" | "comparison" | "synthesis";
 type AgentCardState = "active" | "complete" | "waiting";
@@ -62,6 +88,7 @@ type AgentId =
   | SpecialistAgentId
   | "research"
   | "comparison"
+  | "chart"
   | "synthesis";
 
 type UsageStats = {
@@ -91,6 +118,137 @@ type ParsedSseEvent = {
   data: string;
   event: string;
 };
+type CompareFocusArea = (typeof COMPARE_FOCUS_OPTIONS)[number];
+type ResolutionTarget = "intel" | "base" | "target";
+type ResolutionMode = "intel" | "compare";
+
+type CompanyResolutionMatch = {
+  confidence?: "high" | "medium" | "low" | string;
+  description?: string;
+  domain?: string;
+  industry?: string;
+  name?: string;
+  stage?: string;
+};
+
+type CompanyResolutionStep = {
+  companyName: string;
+  matches: CompanyResolutionMatch[];
+  mode: ResolutionMode;
+  target: ResolutionTarget;
+};
+
+type PendingIntelRun = {
+  company: string;
+  companyUrl: string | null;
+  mode: "intel";
+  request: string;
+};
+
+type PendingCompareRun = {
+  baseCompany: string;
+  baseUrl: string | null;
+  competitorCompany: string;
+  customFocus: string | null;
+  files: File[];
+  focusAreas: string[];
+  mode: "compare";
+  targetUrl: string | null;
+};
+
+type PendingRun = PendingIntelRun | PendingCompareRun;
+
+type SavedReport = {
+  agentsUsed: string[];
+  chartData?: DashboardData;
+  compareTarget?: string;
+  comparisonOutput?: string;
+  company: string;
+  contextOutput?: string;
+  costUsd?: number;
+  createdAt: string;
+  id: string;
+  mode: Mode;
+  researchOutput: string;
+  synthesisOutput: string;
+  tokenCount?: number;
+  usageStats?: UsageStats;
+};
+
+function readSavedReports(): SavedReport[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(REPORT_STORAGE_KEY);
+    const parsed = JSON.parse(rawValue || "[]") as SavedReport[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function createSavedReportId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `report-${Date.now()}`;
+}
+
+function formatTodayLabel() {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "long",
+    timeZone: "America/Guayaquil",
+  }).format(new Date());
+}
+
+function getReportUsage(report: SavedReport | null | undefined): UsageStats | null {
+  if (!report) {
+    return null;
+  }
+
+  if (report.usageStats) {
+    return report.usageStats;
+  }
+
+  if (report.tokenCount || report.costUsd) {
+    return {
+      cost_usd: report.costUsd ?? 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: report.tokenCount ?? 0,
+    };
+  }
+
+  return null;
+}
+
+function CreatorCredit() {
+  return (
+    <p className="mt-1 text-xs text-gray-600">
+      Made by{" "}
+      <a
+        className="text-gray-500 underline underline-offset-2 hover:text-gray-300"
+        href="https://www.linkedin.com/in/kylekesterson/"
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        Kyle Kesterson
+      </a>{" "}
+      |{" "}
+      <a
+        className="text-gray-500 underline underline-offset-2 hover:text-gray-300"
+        href="https://www.demystified.ai/"
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        Demystified.ai
+      </a>
+    </p>
+  );
+}
 
 const SPECIALIST_AGENT_IDS: SpecialistAgentId[] = [
   "recon",
@@ -173,6 +331,14 @@ const AGENT_CONFIGS: Record<AgentId, AgentConfig> = {
     accentColor: "#fb7185",
     glowColor: "rgba(251, 113, 133, 0.35)",
   },
+  chart: {
+    id: "chart",
+    name: "Chart",
+    description: "Structures dashboard-ready data from the final brief.",
+    icon: BarChart3,
+    accentColor: "#818cf8",
+    glowColor: "rgba(129, 140, 248, 0.35)",
+  },
   synthesis: {
     id: "synthesis",
     name: "Synthesis",
@@ -192,6 +358,7 @@ const INTEL_ROSTER_IDS: AgentId[] = [
   "people",
   "research",
   "synthesis",
+  "chart",
 ];
 
 const COMPARE_ROSTER_IDS: AgentId[] = [
@@ -204,6 +371,7 @@ const COMPARE_ROSTER_IDS: AgentId[] = [
   "research",
   "comparison",
   "synthesis",
+  "chart",
 ];
 
 function createEmptySpecialistOutputs(): SpecialistOutputs {
@@ -218,6 +386,10 @@ function createEmptySpecialistOutputs(): SpecialistOutputs {
 
 function getAgentConfig(agentId: AgentId): AgentConfig {
   return AGENT_CONFIGS[agentId];
+}
+
+function isAgentId(value: string): value is AgentId {
+  return value in AGENT_CONFIGS;
 }
 
 function isSpecialistAgent(agentId: AgentId): agentId is SpecialistAgentId {
@@ -256,8 +428,34 @@ function parseTriageSelection(rawValue: string): TriageSelection | null {
   }
 }
 
-function buildAnalyzeUrl(company: string, request: string): string {
+function normalizeUrlForContext(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `https://${trimmed}`;
+}
+
+function getDisplayDomain(value: string): string {
+  const normalized = normalizeUrlForContext(value);
+
+  try {
+    return new URL(normalized).host.replace(/^www\./, "");
+  } catch {
+    return value.replace(/^https?:\/\//i, "").replace(/^www\./, "");
+  }
+}
+
+function buildAnalyzeUrl(company: string, request: string, companyUrl?: string): string {
   const params = new URLSearchParams({ company, request });
+  if (companyUrl?.trim()) {
+    params.set("company_url", companyUrl.trim());
+  }
   return `/api/analyze?${params.toString()}`;
 }
 
@@ -308,6 +506,60 @@ function getPipelineCardStyle(
   return SURFACE_RADIUS_STYLE;
 }
 
+function buildMarkdownComponents(variant: "screen" | "print") {
+  const isPrint = variant === "print";
+
+  return {
+    h1: ({ children }: any) => <h1>{children}</h1>,
+    h2: ({ children }: any) => <h2>{children}</h2>,
+    h3: ({ children }: any) => <h3>{children}</h3>,
+    p: ({ children }: any) => <p>{children}</p>,
+    ul: ({ children }: any) => <ul>{children}</ul>,
+    ol: ({ children }: any) => <ol>{children}</ol>,
+    li: ({ children }: any) => <li>{children}</li>,
+    strong: ({ children }: any) => <strong>{children}</strong>,
+    em: ({ children }: any) => <em>{children}</em>,
+    a: ({ children, href }: any) => (
+      <a href={href} rel="noreferrer" target={isPrint ? undefined : "_blank"}>
+        {children}
+      </a>
+    ),
+    hr: () => <hr />,
+    code: ({ children }: any) => <code>{children}</code>,
+    table: ({ ...props }: any) => (
+      <table
+        className={`my-4 w-full border-collapse ${
+          isPrint ? "text-[10pt]" : "text-sm"
+        }`}
+        {...props}
+      />
+    ),
+    th: ({ ...props }: any) => (
+      <th
+        className={
+          isPrint
+            ? "border border-gray-300 px-3 py-2 text-left font-semibold text-black"
+            : "border border-gray-600 bg-gray-800 px-3 py-2 text-left font-semibold text-white"
+        }
+        {...props}
+      />
+    ),
+    td: ({ ...props }: any) => (
+      <td
+        className={
+          isPrint
+            ? "border border-gray-300 px-3 py-2 text-black"
+            : "border border-gray-700 px-3 py-2 text-gray-300"
+        }
+        {...props}
+      />
+    ),
+    tr: ({ ...props }: any) => (
+      <tr className={isPrint ? "" : "even:bg-gray-900"} {...props} />
+    ),
+  };
+}
+
 function MarkdownDocument({
   content,
   placeholder,
@@ -317,64 +569,15 @@ function MarkdownDocument({
 }) {
   if (!content.trim()) {
     return (
-      <div className="flex h-full items-center justify-center text-center text-sm leading-7 text-gray-300">
+      <div className="flex h-full items-center justify-center text-center text-sm leading-7 text-[#a6a39b]">
         {placeholder}
       </div>
     );
   }
 
   return (
-    <div className="agent-markdown prose prose-invert max-w-none text-[0.95rem] leading-7 text-gray-200">
-      <ReactMarkdown
-        components={{
-          h1: ({ children }) => (
-            <h1 className="mt-0 text-2xl font-semibold tracking-tight text-white">
-              {children}
-            </h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="mt-8 text-xl font-semibold tracking-tight text-white">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="mt-6 text-lg font-semibold tracking-tight text-white">
-              {children}
-            </h3>
-          ),
-          p: ({ children }) => <p className="my-4 text-gray-200">{children}</p>,
-          ul: ({ children }) => <ul className="my-5 space-y-3">{children}</ul>,
-          ol: ({ children }) => <ol className="my-5 space-y-3">{children}</ol>,
-          li: ({ children }) => (
-            <li className="relative pl-5 text-gray-200 before:absolute before:left-0 before:top-[0.78rem] before:h-1.5 before:w-1.5 before:rounded-full before:bg-sky-400/70">
-              {children}
-            </li>
-          ),
-          strong: ({ children }) => (
-            <strong className="font-semibold text-white">{children}</strong>
-          ),
-          em: ({ children }) => <em className="text-gray-100">{children}</em>,
-          a: ({ children, href }) => (
-            <a
-              className="text-red-300 underline decoration-red-500/60 underline-offset-4"
-              href={href}
-              rel="noreferrer"
-              target="_blank"
-            >
-              {children}
-            </a>
-          ),
-          hr: () => <hr className="my-6 border-gray-600" />,
-          code: ({ children }) => (
-            <code
-              className="bg-gray-700 px-1.5 py-0.5 text-[0.9em] text-gray-100"
-              style={SURFACE_RADIUS_STYLE}
-            >
-              {children}
-            </code>
-          ),
-        }}
-      >
+    <div className="markdown-body agent-markdown max-w-none">
+      <ReactMarkdown components={buildMarkdownComponents("screen")} remarkPlugins={[remarkGfm]}>
         {content}
       </ReactMarkdown>
     </div>
@@ -383,49 +586,19 @@ function MarkdownDocument({
 
 function PrintMarkdownDocument({ content }: { content: string }) {
   return (
-    <div className="print-markdown prose max-w-none text-black">
-      <ReactMarkdown
-        components={{
-          h1: ({ children }) => (
-            <h1 className="mt-0 text-2xl font-semibold tracking-tight text-black">
-              {children}
-            </h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="mt-8 text-xl font-semibold tracking-tight text-black">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="mt-6 text-lg font-semibold tracking-tight text-black">
-              {children}
-            </h3>
-          ),
-          p: ({ children }) => <p className="my-4 text-black">{children}</p>,
-          ul: ({ children }) => <ul className="my-5 space-y-3">{children}</ul>,
-          ol: ({ children }) => <ol className="my-5 space-y-3">{children}</ol>,
-          li: ({ children }) => <li className="ml-5 list-disc text-black">{children}</li>,
-          strong: ({ children }) => (
-            <strong className="font-semibold text-black">{children}</strong>
-          ),
-          em: ({ children }) => <em className="text-black">{children}</em>,
-          a: ({ children, href }) => (
-            <a className="text-black underline" href={href}>
-              {children}
-            </a>
-          ),
-          code: ({ children }) => (
-            <code
-              className="bg-gray-100 px-1 py-0.5 text-[0.9em] text-black"
-              style={SURFACE_RADIUS_STYLE}
-            >
-              {children}
-            </code>
-          ),
-        }}
-      >
+    <div className="markdown-body print-markdown max-w-none text-black">
+      <ReactMarkdown components={buildMarkdownComponents("print")} remarkPlugins={[remarkGfm]}>
         {content}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+function InlineResolvingStatus({ label }: { label: string }) {
+  return (
+    <div className="mt-2 inline-flex items-center gap-2 text-xs text-[#9f9b92]">
+      <span className="h-2 w-2 animate-pulse rounded-full bg-[#9f9b92]" />
+      <span>{label}</span>
     </div>
   );
 }
@@ -442,10 +615,10 @@ function AgentStatusBadge({
   if (state === "complete") {
     return (
       <div
-        className="inline-flex items-center gap-2 border border-gray-500 bg-gray-800 px-3 py-1 text-xs uppercase tracking-[0.22em] text-gray-200 print:hidden"
+        className="inline-flex items-center gap-2 border border-[#34312d] bg-[#1b1a18] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[#d6d2ca] print:hidden"
         style={SURFACE_RADIUS_STYLE}
       >
-        <span className="text-sm leading-none text-white">✓</span>
+        <span className="text-sm leading-none text-[#f3f1ea]">✓</span>
         Complete
       </div>
     );
@@ -454,7 +627,7 @@ function AgentStatusBadge({
   if (state === "active") {
     return (
       <div
-        className="inline-flex items-center gap-2 border border-gray-500 bg-gray-800 px-3 py-1 text-xs uppercase tracking-[0.22em] text-gray-100 print:hidden"
+        className="inline-flex items-center gap-2 border border-[#34312d] bg-[#1b1a18] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[#ebe8e1] print:hidden"
         style={SURFACE_RADIUS_STYLE}
       >
         <span
@@ -468,7 +641,7 @@ function AgentStatusBadge({
 
   return (
     <div
-      className="inline-flex items-center gap-2 border border-gray-500 bg-gray-800 px-3 py-1 text-xs uppercase tracking-[0.22em] text-gray-300 print:hidden"
+      className="inline-flex items-center gap-2 border border-[#34312d] bg-[#1b1a18] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[#9f9b92] print:hidden"
       style={SURFACE_RADIUS_STYLE}
     >
       <span className="h-2.5 w-2.5 rounded-full bg-gray-400" />
@@ -488,21 +661,242 @@ function UsageSummary({
 
   return (
     <div
-      className={`border-t border-gray-500 pt-3 text-xs leading-6 text-gray-300 ${
+      className={`border-t border-[#2c2a27] pt-3 text-xs leading-6 text-[#a7a39a] ${
         centered ? "mx-auto flex w-fit flex-col items-center text-center" : ""
       }`}
     >
-      <p className="font-mono text-gray-200">
-        <span className="font-semibold text-white">Tokens:</span>{" "}
+      <p className="font-mono text-[#d7d3cb]">
+        <span className="font-semibold text-[#f3f1ea]">Tokens:</span>{" "}
         {numberFormatter.format(usageStats.total_tokens)} total (
         {numberFormatter.format(usageStats.input_tokens)} in /{" "}
         {numberFormatter.format(usageStats.output_tokens)} out)
       </p>
-      <p className="font-mono text-gray-200">
-        <span className="font-semibold text-white">Cost:</span> $
+      <p className="font-mono text-[#d7d3cb]">
+        <span className="font-semibold text-[#f3f1ea]">Cost:</span> $
         {usageStats.cost_usd.toFixed(4)}
       </p>
     </div>
+  );
+}
+
+function ReportsView({
+  onGraphs,
+  pendingDeleteReportId,
+  reports,
+  onDelete,
+  onDownload,
+  onView,
+}: {
+  onGraphs: (report: SavedReport) => void;
+  pendingDeleteReportId: string | null;
+  reports: SavedReport[];
+  onDelete: (reportId: string) => void;
+  onDownload: (report: SavedReport) => void;
+  onView: (report: SavedReport) => void;
+}) {
+  const dateFormatter = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const tokenFormatter = new Intl.NumberFormat();
+
+  return (
+    <section
+      className="space-y-5 border border-[#282623] bg-[#161513] px-6 py-6"
+      style={SURFACE_RADIUS_STYLE}
+    >
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold text-[#f3f1ea]">REPORTS HISTORY</h2>
+        <p className="mt-1 text-xs text-gray-600">
+          Reports are stored locally in your browser. Clearing browser data will
+          remove them.
+        </p>
+        <div className="border-t border-[#2a2d36]" />
+      </div>
+
+      {!reports.length ? (
+        <div className="flex min-h-[16rem] items-center justify-center text-center">
+          <p className="text-sm text-[#9f9b92]">
+            No reports yet — run an analysis to save your first report
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {reports.map((report) => {
+            const agentNames = report.agentsUsed
+              .map((agentId) =>
+                isAgentId(agentId) ? getAgentConfig(agentId).name : agentId,
+              )
+              .join(", ");
+
+            return (
+              <article
+                key={report.id}
+                className="mb-3 border border-[#2a2d36] bg-[#13161e] p-4"
+                style={SURFACE_RADIUS_STYLE}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-base font-semibold text-white">
+                        {report.mode === "compare" && report.compareTarget
+                          ? `${report.company} vs ${report.compareTarget}`
+                          : report.company}
+                      </p>
+                      <span
+                        className="border border-[#343846] bg-[#191d27] px-2 py-1 text-[0.68rem] uppercase tracking-[0.2em] text-gray-300"
+                        style={SURFACE_RADIUS_STYLE}
+                      >
+                        {report.mode}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-400">Agents: {agentNames}</p>
+                    <p className="font-mono text-xs text-gray-500">
+                      {tokenFormatter.format(report.tokenCount ?? 0)} tokens · $
+                      {(report.costUsd ?? 0).toFixed(2)}
+                    </p>
+                  </div>
+
+                  <div className="space-y-3 text-right">
+                    <p className="text-sm text-gray-500">
+                      {dateFormatter.format(new Date(report.createdAt))}
+                    </p>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        className="border border-[#34312d] bg-[#1b1a18] px-3 py-1.5 text-xs text-[#ddd9d1] transition hover:bg-[#24221f]"
+                        onClick={() => onView(report)}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        View
+                      </button>
+                      <button
+                        className="border border-[#34312d] bg-[#1b1a18] px-3 py-1.5 text-xs text-[#ddd9d1] transition hover:bg-[#24221f]"
+                        onClick={() => onGraphs(report)}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        Graphs
+                      </button>
+                      <button
+                        className="border border-[#34312d] bg-[#1b1a18] px-3 py-1.5 text-xs text-[#ddd9d1] transition hover:bg-[#24221f]"
+                        onClick={() => onDownload(report)}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        Download
+                      </button>
+                      <button
+                        className="border border-[#4a2d2d] bg-[#241515] px-3 py-1.5 text-xs text-[#f0c7c7] transition hover:bg-[#301b1b]"
+                        onClick={() => onDelete(report.id)}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        {pendingDeleteReportId === report.id ? "Confirm?" : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ResearchView({
+  isMemoOpen,
+  onToggleMemo,
+  onDownload,
+  researchMemo,
+  synthesisMemo,
+  usageStats,
+}: {
+  isMemoOpen: boolean;
+  onDownload: () => void;
+  onToggleMemo: () => void;
+  researchMemo: string;
+  synthesisMemo: string;
+  usageStats: UsageStats | null;
+}) {
+  if (!synthesisMemo.trim()) {
+    return (
+      <div className="flex h-64 items-center justify-center text-sm text-gray-500">
+        <span className="font-mono">Run an analysis to populate Research.</span>
+      </div>
+    );
+  }
+
+  return (
+    <section
+      className="max-h-[calc(100vh-120px)] space-y-6 overflow-y-auto border border-[#282623] bg-[#161513] px-6 py-4"
+      style={SURFACE_RADIUS_STYLE}
+    >
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold text-[#f3f1ea]">RESEARCH VIEW</h2>
+        <div className="border-t border-[#2a2d36]" />
+      </div>
+
+      <section className="space-y-4">
+        <div className="space-y-2">
+          <p className="text-xs uppercase tracking-[0.28em] text-gray-500">
+            Executive Brief
+          </p>
+          <div className="border-t border-[#2a2d36]" />
+        </div>
+        <div className="markdown-body max-w-none">
+          <ReactMarkdown
+            components={buildMarkdownComponents("screen")}
+            remarkPlugins={[remarkGfm]}
+          >
+            {synthesisMemo}
+          </ReactMarkdown>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <button
+          className="flex w-full items-center justify-between border-b border-[#2a2d36] pb-3 text-left"
+          onClick={onToggleMemo}
+          type="button"
+        >
+          <span className="text-xs uppercase tracking-[0.28em] text-gray-500">
+            Research Memo
+          </span>
+          <span className="text-sm text-gray-300">{isMemoOpen ? "▼" : "▶"}</span>
+        </button>
+
+        {isMemoOpen ? (
+          <div className="markdown-body max-w-none">
+            <ReactMarkdown
+              components={buildMarkdownComponents("screen")}
+              remarkPlugins={[remarkGfm]}
+            >
+              {researchMemo || "_No research memo available._"}
+            </ReactMarkdown>
+          </div>
+        ) : null}
+      </section>
+
+      {usageStats ? (
+        <div className="pt-2">
+          <div className="mt-5 flex flex-col items-center gap-3">
+            <button
+              className="inline-flex items-center justify-center border border-[#34312d] bg-[#2a2825] px-4 py-3 text-sm font-semibold text-[#f3f1ea] transition hover:bg-[#34312d]"
+              onClick={onDownload}
+              style={SURFACE_RADIUS_STYLE}
+              type="button"
+            >
+              Download Analysis
+            </button>
+            <UsageSummary centered usageStats={usageStats} />
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -525,11 +919,13 @@ function PipelineConnector({
       />
       <div
         className={`inline-flex min-w-32 flex-col items-center gap-1 border px-4 py-2 text-[0.68rem] uppercase tracking-[0.28em] transition ${
-          active ? "animate-pulse bg-gray-700/70 text-white" : "bg-gray-800 text-gray-300"
+          active
+            ? "animate-pulse bg-[#24221f] text-[#f3f1ea]"
+            : "bg-[#161513] text-[#9f9b92]"
         }`}
         style={{
           ...SURFACE_RADIUS_STYLE,
-          borderColor: active ? accentColor : "rgba(107, 114, 128, 1)",
+          borderColor: active ? accentColor : "#35322f",
           boxShadow: active ? `0 0 20px ${accentColor}22` : "none",
         }}
       >
@@ -567,12 +963,12 @@ function PipelineCard({
 }) {
   return (
     <article
-      className={`overflow-hidden border border-gray-600 bg-gray-900 transition duration-300 ${
-        state === "waiting" ? "opacity-50" : "opacity-100"
+      className={`overflow-hidden border border-[#282623] bg-[#161513] transition duration-300 ${
+        state === "waiting" ? "opacity-60" : "opacity-100"
       }`}
       style={getPipelineCardStyle(state, accentColor, glowColor)}
     >
-      <div className="flex items-center justify-between border-b border-gray-600 px-5 py-4">
+      <div className="flex items-center justify-between border-b border-[#282623] px-5 py-4">
         <div className="flex items-center gap-3">
           <span
             className={`h-2.5 w-2.5 rounded-full ${
@@ -587,8 +983,8 @@ function PipelineCard({
             }}
           />
           <div>
-            <h3 className="text-base font-semibold text-white">{title}</h3>
-            <p className="mt-1 text-xs uppercase tracking-[0.22em] text-gray-300">
+            <h3 className="text-base font-semibold text-[#f3f1ea]">{title}</h3>
+            <p className="mt-1 text-xs uppercase tracking-[0.22em] text-[#9f9b92]">
               {subtitle}
             </p>
           </div>
@@ -600,7 +996,7 @@ function PipelineCard({
         />
       </div>
       <div
-        className="h-[24rem] overflow-y-auto bg-gray-900 px-5 py-5"
+        className="h-[24rem] overflow-y-auto bg-[#161513] px-5 py-5"
         ref={bodyRef}
       >
         <MarkdownDocument content={content} placeholder={placeholder} />
@@ -654,7 +1050,7 @@ function RosterCard({
 
   return (
     <div
-      className={`relative flex min-h-[120px] flex-col border bg-gray-800 p-4 transition-all duration-300 ${
+      className={`relative flex min-h-[120px] flex-col border bg-[#1a1917] p-4 transition-all duration-300 ${
         dimmed ? "opacity-50" : "opacity-100"
       }`}
       ref={onRef}
@@ -680,14 +1076,14 @@ function RosterCard({
       </div>
 
       <div className="flex flex-1 items-center justify-center">
-        <Icon className="h-8 w-8 text-gray-300" strokeWidth={1.75} />
+        <Icon className="h-8 w-8 text-[#b5b1a8]" strokeWidth={1.75} />
       </div>
 
       <div className="space-y-1">
-        <p className="text-[0.68rem] uppercase tracking-[0.28em] text-white">
+        <p className="text-[0.68rem] uppercase tracking-[0.28em] text-[#f3f1ea]">
           {agent.name}
         </p>
-        <p className="text-[0.68rem] leading-4 text-gray-300">
+        <p className="text-[0.68rem] leading-4 text-[#a8a49b]">
           {agent.description}
         </p>
       </div>
@@ -697,21 +1093,53 @@ function RosterCard({
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("intel");
+  const [activeView, setActiveView] = useState<ActiveView>("intel");
 
   const [intelCompany, setIntelCompany] = useState(INITIAL_INTEL_COMPANY);
+  const [intelCompanyUrl, setIntelCompanyUrl] = useState("");
   const [intelRequest, setIntelRequest] = useState(INITIAL_INTEL_REQUEST);
 
   const [baseCompany, setBaseCompany] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [competitorCompany, setCompetitorCompany] = useState("");
-  const [compareFocus, setCompareFocus] = useState("");
+  const [targetUrl, setTargetUrl] = useState("");
+  const [compareFocusAreas, setCompareFocusAreas] = useState<CompareFocusArea[]>(
+    [],
+  );
+  const [compareCustomFocus, setCompareCustomFocus] = useState("");
   const [compareFiles, setCompareFiles] = useState<File[]>([]);
+  const [resolvedIntelDomain, setResolvedIntelDomain] = useState<string | null>(null);
+  const [resolvedBaseDomain, setResolvedBaseDomain] = useState<string | null>(null);
+  const [resolvedTargetDomain, setResolvedTargetDomain] = useState<string | null>(null);
+  const [resolvingLookup, setResolvingLookup] = useState<Record<ResolutionTarget, boolean>>({
+    intel: false,
+    base: false,
+    target: false,
+  });
+  const [resolutionSteps, setResolutionSteps] = useState<CompanyResolutionStep[]>([]);
+  const [currentResolutionIndex, setCurrentResolutionIndex] = useState(0);
+  const [selectedResolutionDomain, setSelectedResolutionDomain] = useState<string | null>(
+    null,
+  );
 
   const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
+  const [chartData, setChartData] = useState<DashboardData | null>(null);
+  const [lastAnalysisOutput, setLastAnalysisOutput] = useState<string | null>(null);
+  const [isPrintingDashboard, setIsPrintingDashboard] = useState(false);
+  const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
+  const [pendingDeleteReportId, setPendingDeleteReportId] = useState<string | null>(null);
   const [status, setStatus] = useState("Idle");
   const [focusAgent, setFocusAgent] = useState<AgentId>("triage");
   const [isLoading, setIsLoading] = useState(false);
   const [isDone, setIsDone] = useState(false);
+  const [todayLabel, setTodayLabel] = useState("");
+  const [storedApiKey, setStoredApiKey] = useState("");
+  const [showApiMenu, setShowApiMenu] = useState(false);
+  const [showApiKeyPrompt, setShowApiKeyPrompt] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [hasHydrated, setHasHydrated] = useState(false);
+  const [isResearchMemoOpen, setIsResearchMemoOpen] = useState(false);
+  const [activeReport, setActiveReport] = useState<SavedReport | null>(null);
 
   const [rosterPhase, setRosterPhase] = useState<RosterPhase>("idle");
   const [rosterMessage, setRosterMessage] = useState("");
@@ -779,15 +1207,23 @@ export default function Home() {
   const phase3UnlockedRef = useRef(false);
   const activeScrollTimeoutRef = useRef<number | null>(null);
   const connectorTimeoutsRef = useRef<number[]>([]);
+  const pendingRunRef = useRef<PendingRun | null>(null);
+  const resolutionRequestIdRef = useRef(0);
+  const printRestoreViewRef = useRef<ActiveView>("intel");
+  const pendingDeleteTimeoutRef = useRef<number | null>(null);
+  const runAgentsRef = useRef<string[]>([]);
+  const researchOutputRef = useRef("");
+  const synthesisOutputRef = useRef("");
+  const comparisonOutputRef = useRef("");
+  const contextOutputRef = useRef("");
+  const chartDataRef = useRef<DashboardData | null>(null);
+  const reportSavedForRunRef = useRef(false);
+  const apiMenuRef = useRef<HTMLDivElement | null>(null);
 
   const deferredContextOutput = useDeferredValue(contextOutput);
   const deferredResearchOutput = useDeferredValue(researchOutput);
   const deferredComparisonOutput = useDeferredValue(comparisonOutput);
   const deferredSynthesisOutput = useDeferredValue(synthesisOutput);
-
-  const todayLabel = new Intl.DateTimeFormat(undefined, {
-    dateStyle: "long",
-  }).format(new Date());
 
   const displayedRosterIds =
     mode === "intel" ? INTEL_ROSTER_IDS : COMPARE_ROSTER_IDS;
@@ -795,12 +1231,39 @@ export default function Home() {
   const printIntelCompany = intelCompany.trim() || "Company Analysis";
   const printBaseCompany = baseCompany.trim() || "Base Company";
   const printCompetitorCompany = competitorCompany.trim() || "Competitor";
+  const otherFocusSelected = compareFocusAreas.includes(OTHER_COMPARE_FOCUS);
+  const currentResolution = resolutionSteps[currentResolutionIndex] ?? null;
+  const isResolvingCompanies =
+    resolvingLookup.intel || resolvingLookup.base || resolvingLookup.target;
+  const displayInitials = storedApiKey
+    ? storedApiKey.slice(-4).toUpperCase()
+    : "EIS";
+  const displayName = "My Workspace";
+  const displayRole = storedApiKey
+    ? `API Key: ....${storedApiKey.slice(-6)}`
+    : "API Key: not set";
+  const activeApiKeyPreview = storedApiKey
+    ? `...${storedApiKey.slice(-8)}`
+    : "Not set";
+  const latestResearchReport =
+    activeReport ??
+    savedReports.find((report) => report.synthesisOutput.trim()) ??
+    null;
+  const researchViewSynthesisOutput =
+    synthesisOutput.trim() || latestResearchReport?.synthesisOutput || "";
+  const researchViewResearchOutput =
+    researchOutput.trim() || latestResearchReport?.researchOutput || "";
+  const dashboardViewData =
+    chartData || latestResearchReport?.chartData || null;
+  const loadedUsageStats = usageStats || getReportUsage(latestResearchReport);
+  const hasNavigableSections =
+    Boolean(synthesisOutput.trim()) || savedReports.length > 0;
 
   const assembledAgentIds =
     mode === "intel"
       ? new Set<AgentId>(
           selectedSpecialists.length
-            ? (["triage", "research", "synthesis", ...selectedSpecialists] as AgentId[])
+            ? (["triage", "research", "synthesis", "chart", ...selectedSpecialists] as AgentId[])
             : [],
         )
       : compareRosterActivated
@@ -870,16 +1333,231 @@ export default function Home() {
     }
   }
 
+  function clearResolutionUi() {
+    resolutionRequestIdRef.current += 1;
+    pendingRunRef.current = null;
+    setResolvingLookup({
+      intel: false,
+      base: false,
+      target: false,
+    });
+    setResolutionSteps([]);
+    setCurrentResolutionIndex(0);
+    setSelectedResolutionDomain(null);
+  }
+
+  function persistSavedReports(
+    updater: SavedReport[] | ((current: SavedReport[]) => SavedReport[]),
+  ) {
+    setSavedReports((current) => {
+      const nextReports =
+        typeof updater === "function" ? updater(current) : updater;
+      const trimmedReports = nextReports.slice(0, 20);
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          REPORT_STORAGE_KEY,
+          JSON.stringify(trimmedReports),
+        );
+      }
+
+      return trimmedReports;
+    });
+  }
+
+  function recordAgentUsed(agentId: string) {
+    if (runAgentsRef.current.includes(agentId)) {
+      return;
+    }
+
+    runAgentsRef.current = [...runAgentsRef.current, agentId];
+  }
+
+  function handleApiKeySave() {
+    const normalizedKey = apiKeyInput.trim();
+    if (!normalizedKey) {
+      return;
+    }
+
+    window.localStorage.setItem("eis_api_key", normalizedKey);
+    setStoredApiKey(normalizedKey);
+    setShowApiKeyPrompt(false);
+  }
+
+  function saveCurrentReport(usage: UsageStats) {
+    if (reportSavedForRunRef.current) {
+      return;
+    }
+
+    reportSavedForRunRef.current = true;
+
+    const currentMode = currentRunModeRef.current;
+    const report: SavedReport = {
+      agentsUsed: [...runAgentsRef.current],
+      chartData: chartDataRef.current ?? undefined,
+      compareTarget:
+        currentMode === "compare" ? competitorCompany.trim() || undefined : undefined,
+      comparisonOutput: comparisonOutputRef.current.trim() || undefined,
+      company:
+        currentMode === "compare"
+          ? baseCompany.trim() || "Base Company"
+          : intelCompany.trim() || "Company Analysis",
+      contextOutput: contextOutputRef.current.trim() || undefined,
+      costUsd: usage.cost_usd,
+      createdAt: new Date().toISOString(),
+      id: createSavedReportId(),
+      mode: currentMode,
+      researchOutput: researchOutputRef.current.trim(),
+      synthesisOutput: synthesisOutputRef.current.trim(),
+      tokenCount: usage.total_tokens,
+      usageStats: usage,
+    };
+
+    setActiveReport(report);
+    persistSavedReports((current) => [report, ...current]);
+  }
+
+  function restoreSavedReport(
+    report: SavedReport,
+    nextView: ActiveView = "intel",
+    preferredFocus: AgentId = nextView === "dashboard" ? "chart" : "synthesis",
+  ) {
+    closeActiveStreams();
+    resetRunState(report.mode);
+    doneReceivedRef.current = true;
+    currentRunModeRef.current = report.mode;
+    runAgentsRef.current = [...report.agentsUsed];
+    reportSavedForRunRef.current = true;
+
+    const specialistAgents = SPECIALIST_AGENT_IDS.filter((agentId) =>
+      report.agentsUsed.includes(agentId),
+    );
+    const completedAgentIds = report.agentsUsed.filter(isAgentId);
+    const chartSnapshot = report.chartData ?? null;
+    const fallbackUsage =
+      report.usageStats ??
+      (report.tokenCount || report.costUsd
+        ? {
+            cost_usd: report.costUsd ?? 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: report.tokenCount ?? 0,
+          }
+        : null);
+    const restoredOutput =
+      report.synthesisOutput ||
+      report.comparisonOutput ||
+      report.researchOutput ||
+      report.contextOutput ||
+      null;
+
+    researchOutputRef.current = report.researchOutput;
+    synthesisOutputRef.current = report.synthesisOutput;
+    comparisonOutputRef.current = report.comparisonOutput || "";
+    contextOutputRef.current = report.contextOutput || "";
+    chartDataRef.current = chartSnapshot;
+
+    setMode(report.mode);
+    setActiveReport(report);
+    setActiveView(nextView);
+    setStatus("Loaded saved report.");
+    setIsLoading(false);
+    setIsDone(true);
+    setUsageStats(fallbackUsage);
+    setChartData(chartSnapshot);
+    setLastAnalysisOutput(restoredOutput);
+    setResearchOutput(report.researchOutput);
+    setSynthesisOutput(report.synthesisOutput);
+    setComparisonOutput(report.comparisonOutput || "");
+    setContextOutput(report.contextOutput || "");
+    setCompletedAgents(new Set(completedAgentIds));
+    setActiveAgents(new Set());
+    setSelectedSpecialists(specialistAgents);
+    setSelectedSpecialistTab(
+      specialistAgents[0] ?? (report.mode === "compare" ? "recon" : null),
+    );
+    const nextFocusAgent =
+      preferredFocus === "chart" && chartSnapshot ? "chart" : "synthesis";
+    setFocusAgent(nextFocusAgent);
+    setRosterPhase("assembled");
+    setRosterMessage("");
+    setScanIndex(null);
+    setTriageReasoning(
+      report.mode === "intel" ? "Loaded from saved report." : "",
+    );
+    setSpecialistPanelCollapsed(false);
+    setCompareRosterActivated(report.mode === "compare");
+
+    if (report.mode === "intel") {
+      setIntelCompany(report.company);
+      setIntelCompanyUrl("");
+      setResolvedIntelDomain(null);
+    } else {
+      setBaseCompany(report.company);
+      setBaseUrl("");
+      setResolvedBaseDomain(null);
+      setCompetitorCompany(report.compareTarget || "");
+      setTargetUrl("");
+      setResolvedTargetDomain(null);
+      setCompareFocusAreas([]);
+      setCompareCustomFocus("");
+      setCompareFiles([]);
+    }
+
+    if (nextView === "intel") {
+      scheduleScrollToAgent(nextFocusAgent);
+    }
+  }
+
+  function handleDeleteReportClick(reportId: string) {
+    if (pendingDeleteTimeoutRef.current !== null) {
+      window.clearTimeout(pendingDeleteTimeoutRef.current);
+      pendingDeleteTimeoutRef.current = null;
+    }
+
+    if (pendingDeleteReportId === reportId) {
+      persistSavedReports((current) =>
+        current.filter((report) => report.id !== reportId),
+      );
+      setPendingDeleteReportId(null);
+      return;
+    }
+
+    setPendingDeleteReportId(reportId);
+    pendingDeleteTimeoutRef.current = window.setTimeout(() => {
+      setPendingDeleteReportId(null);
+      pendingDeleteTimeoutRef.current = null;
+    }, 3000);
+  }
+
+  function handleDownloadSavedReport(report: SavedReport) {
+    restoreSavedReport(report, "research", "synthesis");
+    window.setTimeout(() => {
+      handleDownloadAnalysis();
+    }, 80);
+  }
+
   function resetRunState(nextMode: Mode) {
     clearSequenceTimers();
     clearConnectorFlashes();
+    clearResolutionUi();
     doneReceivedRef.current = false;
     stageRef.current = "idle";
     currentRunModeRef.current = nextMode;
     expectedCloseRef.current = false;
+    runAgentsRef.current = [];
+    researchOutputRef.current = "";
+    synthesisOutputRef.current = "";
+    comparisonOutputRef.current = "";
+    contextOutputRef.current = "";
+    chartDataRef.current = null;
+    reportSavedForRunRef.current = false;
 
     setStatus("Idle");
     setUsageStats(null);
+    setChartData(null);
+    setLastAnalysisOutput(null);
+    setIsPrintingDashboard(false);
     setIsLoading(false);
     setIsDone(false);
     setRosterPhase("idle");
@@ -913,6 +1591,8 @@ export default function Home() {
     const target =
       agentId === "triage"
         ? rosterCardRefs.current.triage
+        : agentId === "chart"
+          ? rosterCardRefs.current.chart
         : agentId === "context"
           ? contextCardRef.current
           : isSpecialistAgent(agentId)
@@ -1083,6 +1763,7 @@ export default function Home() {
       return;
     }
 
+    contextOutputRef.current += chunk;
     startTransition(() => {
       setContextOutput((current) => current + chunk);
     });
@@ -1108,6 +1789,7 @@ export default function Home() {
       return;
     }
 
+    researchOutputRef.current += chunk;
     startTransition(() => {
       setResearchOutput((current) => current + chunk);
     });
@@ -1118,6 +1800,7 @@ export default function Home() {
       return;
     }
 
+    comparisonOutputRef.current += chunk;
     startTransition(() => {
       setComparisonOutput((current) => current + chunk);
     });
@@ -1128,12 +1811,14 @@ export default function Home() {
       return;
     }
 
+    synthesisOutputRef.current += chunk;
     startTransition(() => {
       setSynthesisOutput((current) => current + chunk);
     });
   }
 
   function handleResearchHandoff() {
+    recordAgentUsed("research");
     stageRef.current = "research";
     setStreamStage("research");
     flashConnector("specialistResearch");
@@ -1141,6 +1826,7 @@ export default function Home() {
   }
 
   function handleComparisonHandoff() {
+    recordAgentUsed("comparison");
     stageRef.current = "comparison";
     setStreamStage("comparison");
     flashConnector("researchComparison");
@@ -1149,6 +1835,7 @@ export default function Home() {
   }
 
   function handleSynthesisHandoff() {
+    recordAgentUsed("synthesis");
     stageRef.current = "synthesis";
     setStreamStage("synthesis");
 
@@ -1165,7 +1852,11 @@ export default function Home() {
 
   function handleDoneEvent() {
     doneReceivedRef.current = true;
-    markAgentComplete("synthesis");
+    if (activeAgents.has("chart")) {
+      markAgentComplete("chart");
+    } else {
+      markAgentComplete("synthesis");
+    }
     setStatus(
       currentRunModeRef.current === "compare"
         ? "Comparison complete."
@@ -1196,9 +1887,37 @@ export default function Home() {
       return;
     }
 
+    if (data.startsWith(CHART_DATA_TOKEN)) {
+      console.log("[CHART_DATA]", data);
+      const rawChartJson = data.slice(CHART_DATA_TOKEN.length).trimStart();
+      if (!rawChartJson || rawChartJson === "{}") {
+        chartDataRef.current = null;
+        setChartData(null);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(rawChartJson) as DashboardData;
+        chartDataRef.current = parsed;
+        setChartData(parsed);
+      } catch (error) {
+        console.error(
+          "Chart data parse error:",
+          error,
+          rawChartJson,
+        );
+        chartDataRef.current = null;
+        setChartData(null);
+      }
+      return;
+    }
+
     if (data.startsWith(USAGE_TOKEN)) {
       try {
-        setUsageStats(JSON.parse(data.slice(USAGE_TOKEN.length).trimStart()) as UsageStats);
+        const parsedUsage = JSON.parse(
+          data.slice(USAGE_TOKEN.length).trimStart(),
+        ) as UsageStats;
+        setUsageStats(parsedUsage);
+        saveCurrentReport(parsedUsage);
       } catch {
         setUsageStats(null);
       }
@@ -1221,6 +1940,7 @@ export default function Home() {
     }
 
     if (data === "[AGENT_START_context]") {
+      recordAgentUsed("context");
       stageRef.current = "context";
       setStreamStage("context");
       markAgentActive("context");
@@ -1232,12 +1952,25 @@ export default function Home() {
       return;
     }
 
+    if (data === "[AGENT_START_chart]") {
+      recordAgentUsed("chart");
+      markAgentComplete("synthesis");
+      markAgentActive("chart");
+      return;
+    }
+
+    if (data === "[AGENT_DONE_chart]") {
+      markAgentComplete("chart");
+      return;
+    }
+
     const agentStartMatch = data.match(/^\[AGENT_START_([a-z]+)\]$/);
     if (agentStartMatch) {
       const agentId = normalizeSpecialistAgent(agentStartMatch[1]);
       if (!agentId) {
         return;
       }
+      recordAgentUsed(agentId);
       markAgentActive(agentId);
       setSelectedSpecialistTab(agentId);
       return;
@@ -1319,6 +2052,57 @@ export default function Home() {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let currentEvent = "message";
+    let dataLines: string[] = [];
+
+    const flushEvent = () => {
+      if (!dataLines.length) {
+        currentEvent = "message";
+        return;
+      }
+
+      handleParsedStreamEvent(currentEvent, dataLines.join("\n"));
+      currentEvent = "message";
+      dataLines = [];
+    };
+
+    const processLine = (line: string) => {
+      if (line === "") {
+        flushEvent();
+        return;
+      }
+
+      if (line.startsWith("event:")) {
+        currentEvent = line.slice("event:".length).trim() || "message";
+        return;
+      }
+
+      if (line.startsWith("data: [CHART_DATA]")) {
+        const jsonStr = line.slice("data: [CHART_DATA]".length).trim();
+        console.log("[CHART] Received, length:", jsonStr.length);
+
+        if (jsonStr && jsonStr !== "{}") {
+          try {
+            const parsed = JSON.parse(jsonStr) as DashboardData;
+            console.log("[CHART] Parsed successfully:", Object.keys(parsed));
+            chartDataRef.current = parsed;
+            setChartData(parsed);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Unknown parse error";
+            console.error("[CHART] Parse error:", message);
+            console.error("[CHART] Raw string:", jsonStr.substring(0, 300));
+          }
+        }
+
+        dataLines.push(`${CHART_DATA_TOKEN}${jsonStr}`);
+        return;
+      }
+
+      if (line.startsWith("data:")) {
+        dataLines.push(line.slice("data:".length).replace(/^ /, ""));
+      }
+    };
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1328,24 +2112,19 @@ export default function Home() {
       }
 
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-      const chunks = buffer.split("\n\n");
-      buffer = chunks.pop() ?? "";
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-      for (const chunk of chunks) {
-        const parsed = parseSseBlock(chunk);
-        if (parsed) {
-          handleParsedStreamEvent(parsed.event, parsed.data);
-        }
+      for (const line of lines) {
+        processLine(line);
       }
     }
 
-    const trailing = buffer.trim();
-    if (trailing) {
-      const parsed = parseSseBlock(trailing);
-      if (parsed) {
-        handleParsedStreamEvent(parsed.event, parsed.data);
-      }
+    if (buffer) {
+      processLine(buffer);
     }
+
+    flushEvent();
   }
 
   async function startCompareFetchStream(formData: FormData) {
@@ -1395,6 +2174,9 @@ export default function Home() {
     expectedCloseRef.current = false;
     doneReceivedRef.current = false;
     currentRunModeRef.current = runMode;
+    if (runMode === "intel") {
+      recordAgentUsed("triage");
+    }
     setIsLoading(true);
     setStatus(
       runMode === "compare"
@@ -1403,25 +2185,51 @@ export default function Home() {
     );
   }
 
-  function handleIntelSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function setResolvingTarget(target: ResolutionTarget, resolving: boolean) {
+    setResolvingLookup((current) => ({
+      ...current,
+      [target]: resolving,
+    }));
+  }
 
-    const company = intelCompany.trim();
-    const request = intelRequest.trim();
+  async function resolveCompanyCandidates(
+    companyName: string,
+    resolutionMode: ResolutionMode,
+  ): Promise<CompanyResolutionMatch[]> {
+    const response = await fetch("/api/resolve-company", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        company_name: companyName,
+        mode: resolutionMode,
+      }),
+    });
 
-    if (!company || !request) {
-      setStatus("Both fields are required.");
-      return;
+    if (!response.ok) {
+      throw new Error("Company resolution failed.");
     }
 
+    const payload = (await response.json()) as { matches?: CompanyResolutionMatch[] };
+    return Array.isArray(payload.matches) ? payload.matches : [];
+  }
+
+  function startIntelRun(run: PendingIntelRun) {
     prepareNewRun("intel");
     beginIntelRosterSequence();
 
-    const source = new EventSource(buildAnalyzeUrl(company, request));
+    const source = new EventSource(
+      buildAnalyzeUrl(run.company, run.request, run.companyUrl ?? undefined),
+    );
     sourceRef.current = source;
 
     source.onopen = () => {
       setStatus("Agent pipeline connected. Waiting for results.");
+    };
+
+    source.onmessage = (message) => {
+      handleParsedStreamEvent("message", (message as MessageEvent<string>).data);
     };
 
     source.addEventListener("status", (message) => {
@@ -1467,8 +2275,202 @@ export default function Home() {
     };
   }
 
-  function handleCompareSubmit(event: FormEvent<HTMLFormElement>) {
+  function startCompareRun(run: PendingCompareRun) {
+    prepareNewRun("compare");
+    beginCompareRosterSequence();
+    setSelectedSpecialists(SPECIALIST_AGENT_IDS.slice());
+    setSelectedSpecialistTab("recon");
+
+    const formData = new FormData();
+    formData.set("base_company", run.baseCompany);
+    formData.set("competitor_company", run.competitorCompany);
+
+    if (run.baseUrl?.trim()) {
+      formData.set("base_url", run.baseUrl.trim());
+    }
+
+    if (run.targetUrl?.trim()) {
+      formData.set("target_url", run.targetUrl.trim());
+    }
+
+    for (const focusArea of run.focusAreas) {
+      formData.append("focus_areas", focusArea);
+    }
+
+    if (run.customFocus?.trim()) {
+      formData.set("custom_focus", run.customFocus.trim());
+    }
+
+    for (const file of run.files) {
+      formData.append("files", file, file.name);
+    }
+
+    void startCompareFetchStream(formData);
+  }
+
+  function startPendingRun(run: PendingRun) {
+    if (run.mode === "intel") {
+      startIntelRun(run);
+      return;
+    }
+
+    startCompareRun(run);
+  }
+
+  function openResolutionQueue(steps: CompanyResolutionStep[], pendingRun: PendingRun) {
+    pendingRunRef.current = pendingRun;
+    setResolutionSteps(steps);
+    setCurrentResolutionIndex(0);
+    setSelectedResolutionDomain(null);
+    setStatus("Select the correct company match to continue.");
+  }
+
+  function applyResolutionSelection(match: CompanyResolutionMatch | null) {
+    const step = currentResolution;
+    if (!step) {
+      return;
+    }
+
+    if (match) {
+      const resolvedUrl = match.domain ? normalizeUrlForContext(match.domain) : null;
+      const resolvedDomain = match.domain ? getDisplayDomain(match.domain) : null;
+
+      if (step.target === "intel") {
+        if (match.name?.trim()) {
+          setIntelCompany(match.name.trim());
+        }
+        setResolvedIntelDomain(resolvedDomain);
+
+        if (pendingRunRef.current?.mode === "intel") {
+          pendingRunRef.current = {
+            ...pendingRunRef.current,
+            company: match.name?.trim() || pendingRunRef.current.company,
+            companyUrl: resolvedUrl || pendingRunRef.current.companyUrl,
+          };
+        }
+      } else if (step.target === "base") {
+        if (match.name?.trim()) {
+          setBaseCompany(match.name.trim());
+        }
+        setResolvedBaseDomain(resolvedDomain);
+
+        if (pendingRunRef.current?.mode === "compare") {
+          pendingRunRef.current = {
+            ...pendingRunRef.current,
+            baseCompany: match.name?.trim() || pendingRunRef.current.baseCompany,
+            baseUrl: resolvedUrl || pendingRunRef.current.baseUrl,
+          };
+        }
+      } else {
+        if (match.name?.trim()) {
+          setCompetitorCompany(match.name.trim());
+        }
+        setResolvedTargetDomain(resolvedDomain);
+
+        if (pendingRunRef.current?.mode === "compare") {
+          pendingRunRef.current = {
+            ...pendingRunRef.current,
+            competitorCompany:
+              match.name?.trim() || pendingRunRef.current.competitorCompany,
+            targetUrl: resolvedUrl || pendingRunRef.current.targetUrl,
+          };
+        }
+      }
+    }
+
+    const nextIndex = currentResolutionIndex + 1;
+    if (nextIndex < resolutionSteps.length) {
+      setCurrentResolutionIndex(nextIndex);
+      setSelectedResolutionDomain(null);
+      return;
+    }
+
+    const pendingRun = pendingRunRef.current;
+    clearResolutionUi();
+    if (pendingRun) {
+      startPendingRun(pendingRun);
+    }
+  }
+
+  async function handleIntelSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (currentResolution || isResolvingCompanies) {
+      setStatus(
+        currentResolution
+          ? "Select the correct company match to continue."
+          : "Identifying company...",
+      );
+      return;
+    }
+
+    const company = intelCompany.trim();
+    const request = intelRequest.trim();
+
+    if (!company || !request) {
+      setStatus("Both fields are required.");
+      return;
+    }
+
+    const resolvedUrl = intelCompanyUrl.trim()
+      ? normalizeUrlForContext(intelCompanyUrl)
+      : resolvedIntelDomain
+        ? normalizeUrlForContext(resolvedIntelDomain)
+        : "";
+
+    const pendingRun: PendingIntelRun = {
+      company,
+      companyUrl: resolvedUrl || null,
+      mode: "intel",
+      request,
+    };
+
+    if (pendingRun.companyUrl) {
+      startIntelRun(pendingRun);
+      return;
+    }
+
+    const requestId = resolutionRequestIdRef.current + 1;
+    resolutionRequestIdRef.current = requestId;
+    setResolvingTarget("intel", true);
+    setStatus("Identifying company...");
+
+    try {
+      const matches = await resolveCompanyCandidates(company, "intel");
+      if (requestId !== resolutionRequestIdRef.current) {
+        return;
+      }
+
+      setResolvingTarget("intel", false);
+
+      if (matches.length) {
+        openResolutionQueue(
+          [{ companyName: company, matches, mode: "intel", target: "intel" }],
+          pendingRun,
+        );
+        return;
+      }
+    } catch {
+      if (requestId !== resolutionRequestIdRef.current) {
+        return;
+      }
+      setResolvingTarget("intel", false);
+    }
+
+    startIntelRun(pendingRun);
+  }
+
+  async function handleCompareSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (currentResolution || isResolvingCompanies) {
+      setStatus(
+        currentResolution
+          ? "Select the correct company match to continue."
+          : "Identifying company...",
+      );
+      return;
+    }
 
     const trimmedBaseCompany = baseCompany.trim();
     const trimmedCompetitorCompany = competitorCompany.trim();
@@ -1478,28 +2480,105 @@ export default function Home() {
       return;
     }
 
-    prepareNewRun("compare");
-    beginCompareRosterSequence();
-    setSelectedSpecialists(SPECIALIST_AGENT_IDS.slice());
-    setSelectedSpecialistTab("recon");
-
-    const formData = new FormData();
-    formData.set("base_company", trimmedBaseCompany);
-    formData.set("competitor_company", trimmedCompetitorCompany);
-
-    if (baseUrl.trim()) {
-      formData.set("base_url", baseUrl.trim());
+    if (otherFocusSelected && !compareCustomFocus.trim()) {
+      setStatus("Describe your custom focus or deselect Other.");
+      return;
     }
 
-    if (compareFocus.trim()) {
-      formData.set("focus", compareFocus.trim());
+    const resolvedBaseUrl = baseUrl.trim()
+      ? normalizeUrlForContext(baseUrl)
+      : resolvedBaseDomain
+        ? normalizeUrlForContext(resolvedBaseDomain)
+        : "";
+    const resolvedTargetUrl = targetUrl.trim()
+      ? normalizeUrlForContext(targetUrl)
+      : resolvedTargetDomain
+        ? normalizeUrlForContext(resolvedTargetDomain)
+        : "";
+
+    const pendingRun: PendingCompareRun = {
+      baseCompany: trimmedBaseCompany,
+      baseUrl: resolvedBaseUrl || null,
+      competitorCompany: trimmedCompetitorCompany,
+      customFocus:
+        otherFocusSelected && compareCustomFocus.trim()
+          ? compareCustomFocus.trim()
+          : null,
+      files: [...compareFiles],
+      focusAreas: compareFocusAreas.filter(
+        (focusArea) => focusArea !== OTHER_COMPARE_FOCUS,
+      ),
+      mode: "compare",
+      targetUrl: resolvedTargetUrl || null,
+    };
+
+    const stepsToResolve: ResolutionTarget[] = [];
+    if (!pendingRun.baseUrl) {
+      stepsToResolve.push("base");
+    }
+    if (!pendingRun.targetUrl) {
+      stepsToResolve.push("target");
     }
 
-    for (const file of compareFiles) {
-      formData.append("files", file, file.name);
+    if (!stepsToResolve.length) {
+      startCompareRun(pendingRun);
+      return;
     }
 
-    void startCompareFetchStream(formData);
+    const requestId = resolutionRequestIdRef.current + 1;
+    resolutionRequestIdRef.current = requestId;
+
+    stepsToResolve.forEach((target) => setResolvingTarget(target, true));
+    setStatus("Identifying company...");
+
+    try {
+      const [baseMatches, targetMatches] = await Promise.all([
+        !pendingRun.baseUrl
+          ? resolveCompanyCandidates(trimmedBaseCompany, "compare")
+          : Promise.resolve([]),
+        !pendingRun.targetUrl
+          ? resolveCompanyCandidates(trimmedCompetitorCompany, "compare")
+          : Promise.resolve([]),
+      ]);
+
+      if (requestId !== resolutionRequestIdRef.current) {
+        return;
+      }
+
+      setResolvingTarget("base", false);
+      setResolvingTarget("target", false);
+
+      const steps: CompanyResolutionStep[] = [];
+      if (!pendingRun.baseUrl && baseMatches.length) {
+        steps.push({
+          companyName: trimmedBaseCompany,
+          matches: baseMatches,
+          mode: "compare",
+          target: "base",
+        });
+      }
+      if (!pendingRun.targetUrl && targetMatches.length) {
+        steps.push({
+          companyName: trimmedCompetitorCompany,
+          matches: targetMatches,
+          mode: "compare",
+          target: "target",
+        });
+      }
+
+      if (steps.length) {
+        openResolutionQueue(steps, pendingRun);
+        return;
+      }
+    } catch {
+      if (requestId !== resolutionRequestIdRef.current) {
+        return;
+      }
+      setResolvingTarget("base", false);
+      setResolvingTarget("target", false);
+    }
+
+    startCompareRun(pendingRun);
   }
 
   function handleModeChange(nextMode: Mode) {
@@ -1510,6 +2589,21 @@ export default function Home() {
     closeActiveStreams();
     resetRunState(nextMode);
     setMode(nextMode);
+    setActiveView("intel");
+  }
+
+  function toggleCompareFocusArea(focusArea: CompareFocusArea) {
+    setCompareFocusAreas((current) => {
+      const next = current.includes(focusArea)
+        ? current.filter((value) => value !== focusArea)
+        : [...current, focusArea];
+
+      if (!next.includes(OTHER_COMPARE_FOCUS)) {
+        setCompareCustomFocus("");
+      }
+
+      return next;
+    });
   }
 
   function openFilePicker() {
@@ -1549,14 +2643,73 @@ export default function Home() {
   }
 
   function handleDownloadAnalysis() {
-    window.print();
+    const shouldPrintDashboard = activeView === "dashboard";
+
+    if (!shouldPrintDashboard) {
+      window.print();
+      return;
+    }
+
+    printRestoreViewRef.current = activeView;
+    const restoreAfterPrint = () => {
+      setIsPrintingDashboard(false);
+      setActiveView(printRestoreViewRef.current);
+      window.onafterprint = null;
+    };
+
+    window.onafterprint = restoreAfterPrint;
+    setIsPrintingDashboard(true);
+    setActiveView("dashboard");
+
+    window.setTimeout(() => {
+      window.print();
+    }, 80);
   }
+
+  useEffect(() => {
+    const storedKey = window.localStorage.getItem("eis_api_key") || "";
+    const persistedReports = readSavedReports();
+    setSavedReports(persistedReports);
+    setTodayLabel(formatTodayLabel());
+    setStoredApiKey(storedKey);
+    setApiKeyInput(storedKey);
+    setActiveReport(persistedReports[0] ?? null);
+    setHasHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!showApiMenu) {
+      return;
+    }
+
+    function handleDocumentClick(event: MouseEvent) {
+      if (apiMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setShowApiMenu(false);
+    }
+
+    document.addEventListener("mousedown", handleDocumentClick);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentClick);
+    };
+  }, [showApiMenu]);
+
+  useEffect(() => {
+    if (activeView === "research") {
+      setIsResearchMemoOpen(false);
+    }
+  }, [activeView]);
 
   useEffect(() => {
     return () => {
       closeActiveStreams();
       clearSequenceTimers();
       clearConnectorFlashes();
+      if (pendingDeleteTimeoutRef.current !== null) {
+        window.clearTimeout(pendingDeleteTimeoutRef.current);
+      }
       if (activeScrollTimeoutRef.current !== null) {
         window.clearTimeout(activeScrollTimeoutRef.current);
       }
@@ -1618,76 +2771,471 @@ export default function Home() {
     });
   }, [deferredSynthesisOutput]);
 
-  return (
-    <main className="min-h-screen px-6 py-10 text-gray-100 sm:px-10 print:bg-white print:px-0 print:py-0 print:text-black">
-      <div className="print:hidden">
-        <div className="mx-auto flex max-w-7xl flex-col gap-8">
+  useEffect(() => {
+    if (!isDone) {
+      return;
+    }
+
+    const nextOutput =
+      synthesisOutput.trim() ||
+      comparisonOutput.trim() ||
+      researchOutput.trim() ||
+      contextOutput.trim();
+
+    if (nextOutput) {
+      setLastAnalysisOutput(nextOutput);
+    }
+  }, [comparisonOutput, contextOutput, isDone, researchOutput, synthesisOutput]);
+
+  if (!hasHydrated) {
+    return (
+      <main className="min-h-screen bg-[#09090b]" />
+    );
+  }
+
+  if (!storedApiKey) {
+    return (
+      <main className="min-h-screen bg-[#09090b] px-4 py-6 text-[#f3f1ea] sm:px-6">
+        <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-[720px] items-center justify-center">
           <section
-            className="overflow-hidden border border-gray-500 bg-gray-800 shadow-2xl shadow-black/20 backdrop-blur"
+            className="w-full border border-[#262624] bg-[#11100f] px-8 py-10 shadow-[0_40px_120px_rgba(0,0,0,0.52)]"
             style={SURFACE_RADIUS_STYLE}
           >
-            <div className="border-b border-gray-500 px-8 py-8">
-              <div className="mb-4 flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.32em] text-gray-200">
-                <span
-                  className="border border-red-400/40 bg-red-500/15 px-3 py-1 text-red-100"
-                  style={SURFACE_RADIUS_STYLE}
-                >
-                  Enterprise AI Agent Demo
-                </span>
-                <span
-                  className="border border-gray-500 bg-gray-800 px-3 py-1 text-gray-200"
-                  style={SURFACE_RADIUS_STYLE}
-                >
-                  Agent: {focusAgentLabel}
-                </span>
-                <span
-                  className="border border-gray-500 bg-gray-800 px-3 py-1 text-gray-200"
-                  style={SURFACE_RADIUS_STYLE}
-                >
-                  {isLoading ? "Streaming" : "Ready"}
-                </span>
-              </div>
-
-              <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-                <div className="space-y-3">
-                  <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                    Enterprise Intel System
-                  </h1>
-                  <p className="max-w-2xl text-sm leading-7 text-gray-300 sm:text-base">
-                    Multi-agent enterprise intelligence, powered by OpenAI Agents SDK
-                  </p>
-                  <p className="max-w-2xl text-sm text-gray-300">
-                    Made by Kyle Kesterson | Demystified.ai
-                  </p>
-                </div>
-
-                <div
-                  className="border border-gray-500 bg-gray-800 p-5 text-sm text-white"
-                  style={SURFACE_RADIUS_STYLE}
-                >
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="uppercase tracking-[0.24em] text-gray-300">
-                      Run status
-                    </span>
-                    <span className="text-xs text-white">
-                      {isLoading ? "In progress" : "Standing by"}
-                    </span>
-                  </div>
-                  <p className="min-h-16 leading-7 text-white">{status}</p>
-                </div>
-              </div>
+            <div className="space-y-4">
+              <h1 className="text-4xl font-semibold tracking-tight text-[#f3f1ea] sm:text-5xl">
+                Enterprise Intel System
+              </h1>
+              <p className="max-w-2xl text-sm leading-7 text-[#b3afa6] sm:text-base">
+                Multi-agent enterprise intelligence, powered by OpenAI Agents SDK
+              </p>
+              <CreatorCredit />
             </div>
 
-            <div className="space-y-6 px-8 py-8">
-              <section className="space-y-4">
-                <div className="inline-flex border border-gray-500 bg-gray-900 p-1" style={SURFACE_RADIUS_STYLE}>
+            <div className="mt-8 space-y-4">
+              <label className="block space-y-2">
+                <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                  OpenAI API Key
+                </span>
+                <input
+                  className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                  onChange={(event) => setApiKeyInput(event.target.value)}
+                  placeholder="sk-..."
+                  style={SURFACE_RADIUS_STYLE}
+                  type="password"
+                  value={apiKeyInput}
+                />
+              </label>
+
+              <button
+                className="inline-flex w-full items-center justify-center border border-[#34312d] bg-[#2a2825] px-4 py-3 text-sm font-semibold text-[#f3f1ea] transition hover:bg-[#34312d] disabled:cursor-not-allowed disabled:border-[#2a2825] disabled:bg-[#1b1a18] disabled:text-[#7f7b73]"
+                disabled={!apiKeyInput.trim()}
+                onClick={handleApiKeySave}
+                style={SURFACE_RADIUS_STYLE}
+                type="button"
+              >
+                Enter
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen px-4 py-6 text-[#f3f1ea] sm:px-6 print:bg-white print:px-0 print:py-0 print:text-black">
+      <div className="print:hidden">
+        <div className="mx-auto max-w-[1580px]">
+          <section
+            className="overflow-hidden border border-[#262624] bg-[#11100f] shadow-[0_40px_120px_rgba(0,0,0,0.52)]"
+            style={SURFACE_RADIUS_STYLE}
+          >
+            <div className="flex min-h-[calc(100vh-3rem)]">
+              <aside className="hidden w-[248px] shrink-0 flex-col border-r border-[#262624] bg-[#0f0e0c] lg:flex">
+                <div className="border-b border-[#262624] px-5 py-5">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="flex h-10 w-10 items-center justify-center border border-[#2c2a27] bg-[#181715] text-sm font-semibold text-[#f3f1ea]"
+                      style={SURFACE_RADIUS_STYLE}
+                    >
+                      EI
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-[#f3f1ea]">
+                        Enterprise Intel
+                      </p>
+                      <p className="text-xs text-[#9f9b92]">Demystified.ai</p>
+                    </div>
+                  </div>
+
+                  <div
+                    className="mt-5 flex items-center gap-3 border border-[#2b2926] bg-[#161513] px-4 py-3"
+                    style={SURFACE_RADIUS_STYLE}
+                  >
+                    <div
+                      className="flex h-9 w-9 items-center justify-center border border-[#2c2a27] bg-[#181715] text-xs font-semibold text-[#f3f1ea]"
+                      style={SURFACE_RADIUS_STYLE}
+                    >
+                      {displayInitials}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-[#f3f1ea]">
+                        {displayName}
+                      </p>
+                      <p className="mt-1 text-xs text-[#9f9b92]">
+                        {displayRole}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <nav className="flex flex-1 flex-col gap-1 px-3 py-4">
+                  {[
+                    { id: "intel", icon: Brain, label: "Intel Mode" },
+                    { id: "compare", icon: GitCompare, label: "Compare Mode" },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    const active =
+                      activeView === "intel" &&
+                      ((item.id === "intel" && mode === "intel") ||
+                        (item.id === "compare" && mode === "compare"));
+
+                    return (
+                      <button
+                        key={item.id}
+                        className={`flex items-center gap-3 border px-3 py-3 text-left text-sm transition ${
+                          active
+                            ? "border-[#3a3834] bg-[#1a1917] text-[#f3f1ea]"
+                            : "border-transparent text-[#9f9b92] hover:border-[#2c2a27] hover:bg-[#151412] hover:text-[#ebe8e1]"
+                        }`}
+                        onClick={() => {
+                          if (item.id === "intel") {
+                            if (mode !== "intel") {
+                              handleModeChange("intel");
+                            } else {
+                              setActiveView("intel");
+                            }
+                            return;
+                          }
+
+                          if (mode !== "compare") {
+                            handleModeChange("compare");
+                          } else {
+                            setActiveView("intel");
+                          }
+                        }}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        <Icon className="h-4 w-4" strokeWidth={1.75} />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+
+                  <div className="my-2 border-t border-[#2a2d36]" />
+
+                  {[
+                    { id: "research", icon: FileSearch, label: "Research" },
+                    {
+                      id: "dashboard",
+                      icon: BarChart3,
+                      label: "Graph Dashboard",
+                    },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    const active =
+                      (item.id === "research" && activeView === "research") ||
+                      (item.id === "dashboard" && activeView === "dashboard");
+                    const disabled = !hasNavigableSections;
+
+                    return (
+                      <button
+                        key={item.id}
+                        className={`flex items-center gap-3 border px-3 py-3 text-left text-sm transition ${
+                          active
+                            ? "border-[#3a3834] bg-[#1a1917] text-[#f3f1ea]"
+                            : "border-transparent text-[#9f9b92] hover:border-[#2c2a27] hover:bg-[#151412] hover:text-[#ebe8e1]"
+                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                        onClick={() =>
+                          setActiveView(
+                            item.id === "research" ? "research" : "dashboard",
+                          )
+                        }
+                        style={SURFACE_RADIUS_STYLE}
+                        title={disabled ? "Run an analysis to enable" : undefined}
+                        type="button"
+                      >
+                        <Icon className="h-4 w-4" strokeWidth={1.75} />
+                        <span>{item.label}</span>
+                        {item.id === "dashboard" && dashboardViewData ? (
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-green-400" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+
+                  <div className="my-2 border-t border-[#2a2d36]" />
+
+                  <button
+                    className={`flex items-center gap-3 border px-3 py-3 text-left text-sm transition ${
+                      activeView === "reports"
+                        ? "border-[#3a3834] bg-[#1a1917] text-[#f3f1ea]"
+                        : "border-transparent text-[#9f9b92] hover:border-[#2c2a27] hover:bg-[#151412] hover:text-[#ebe8e1]"
+                    } ${!hasNavigableSections ? "cursor-not-allowed opacity-50" : ""}`}
+                    onClick={() => setActiveView("reports")}
+                    style={SURFACE_RADIUS_STYLE}
+                    title={!hasNavigableSections ? "Run an analysis to enable" : undefined}
+                    type="button"
+                  >
+                    <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                    <span>Reports</span>
+                    {savedReports.length > 0 ? (
+                      <span className="ml-auto font-mono text-xs text-gray-500">
+                        {savedReports.length}
+                      </span>
+                    ) : null}
+                  </button>
+                </nav>
+
+                <div className="border-t border-[#262624] px-5 py-5">
+                  <div
+                    className="border border-[#2b2926] bg-[#161513] px-4 py-4"
+                    style={SURFACE_RADIUS_STYLE}
+                  >
+                    <p className="text-[0.68rem] uppercase tracking-[0.28em] text-[#8f8a7f]">
+                      Live status
+                    </p>
+                    <p className="mt-3 text-sm text-[#f3f1ea]">
+                      {isLoading ? "Pipeline running" : "Workspace idle"}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-[#9f9b92]">
+                      {mode === "intel"
+                        ? "Triage-led intelligence workflow"
+                        : "Head-to-head comparison workflow"}
+                    </p>
+                  </div>
+                </div>
+              </aside>
+
+              <div className="flex min-w-0 flex-1 flex-col">
+                <header className="flex items-center justify-between border-b border-[#262624] px-6 py-4">
+                  <div className="flex items-center gap-3 text-[0.68rem] uppercase tracking-[0.3em] text-[#8f8a7f]">
+                    <span className="text-[#b4b0a8]">
+                      {activeView === "dashboard"
+                        ? "Graph Dashboard"
+                        : activeView === "research"
+                          ? "Research"
+                          : activeView === "reports"
+                            ? "Reports"
+                            : mode === "intel"
+                              ? "Intel Mode"
+                              : "Compare Mode"}
+                    </span>
+                    <span className="h-1 w-1 rounded-full bg-[#3b3935]" />
+                    <span>{mode === "intel" ? "Intel Workspace" : "Comparison Workspace"}</span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="border border-[#312f2c] bg-[#1a1917] px-3 py-1.5 text-[0.68rem] uppercase tracking-[0.26em] text-[#d7d3cb]"
+                      style={SURFACE_RADIUS_STYLE}
+                    >
+                      {isLoading ? "Live run" : "Standby"}
+                    </div>
+                    <div className="relative" ref={apiMenuRef}>
+                      <button
+                        className="flex h-8 w-8 items-center justify-center border border-[#2a2d36] bg-[#1e2130] font-mono text-xs text-gray-400 hover:border-[#3d4150] hover:text-white"
+                        onClick={() => setShowApiMenu((current) => !current)}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        <Settings size={14} />
+                      </button>
+
+                      {showApiMenu ? (
+                        <div
+                          className="absolute right-0 top-10 z-50 w-72 border border-[#2a2d36] bg-[#13161e] p-4 shadow-xl"
+                          style={SURFACE_RADIUS_STYLE}
+                        >
+                          <p className="mb-2 text-xs uppercase tracking-wider text-gray-500">
+                            API KEY
+                          </p>
+                          <p className="mb-3 text-xs font-mono text-gray-400">
+                            Active: {activeApiKeyPreview}
+                          </p>
+                          <button
+                            className="w-full py-1 text-left text-xs text-red-400 hover:text-red-300"
+                            onClick={() => {
+                              setApiKeyInput("");
+                              setShowApiKeyPrompt(true);
+                              setShowApiMenu(false);
+                            }}
+                            type="button"
+                          >
+                            Change API Key →
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </header>
+
+                <div className="flex-1 overflow-y-auto">
+                  {activeView === "dashboard" ? (
+                    <div className="mx-auto max-w-[1160px] px-6 py-6">
+                      {hasNavigableSections ? (
+                        <section
+                          className="border border-[#282623] bg-[#161513]"
+                          style={SURFACE_RADIUS_STYLE}
+                        >
+                          <Dashboard data={dashboardViewData} />
+                        </section>
+                      ) : (
+                        <div className="flex h-64 items-center justify-center text-sm text-gray-500">
+                          <span className="font-mono">
+                            Run an analysis to populate this section.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : activeView === "reports" ? (
+                    <div className="mx-auto max-w-[1160px] px-6 py-6">
+                      {hasNavigableSections ? (
+                        <ReportsView
+                          onGraphs={(report) =>
+                            restoreSavedReport(report, "dashboard", "chart")
+                          }
+                          onDelete={handleDeleteReportClick}
+                          onDownload={handleDownloadSavedReport}
+                          onView={(report) =>
+                            restoreSavedReport(report, "research", "synthesis")
+                          }
+                          pendingDeleteReportId={pendingDeleteReportId}
+                          reports={savedReports}
+                        />
+                      ) : (
+                        <div className="flex h-64 items-center justify-center text-sm text-gray-500">
+                          <span className="font-mono">
+                            Run an analysis to populate this section.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : activeView === "research" ? (
+                    <div className="mx-auto max-w-[1160px] px-6 py-6">
+                      {hasNavigableSections ? (
+                        <ResearchView
+                          isMemoOpen={isResearchMemoOpen}
+                          onDownload={handleDownloadAnalysis}
+                          onToggleMemo={() =>
+                            setIsResearchMemoOpen((current) => !current)
+                          }
+                          researchMemo={researchViewResearchOutput}
+                          synthesisMemo={researchViewSynthesisOutput}
+                          usageStats={loadedUsageStats}
+                        />
+                      ) : (
+                        <div className="flex h-64 items-center justify-center text-sm text-gray-500">
+                          <span className="font-mono">
+                            Run an analysis to populate this section.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mx-auto flex max-w-[1160px] flex-col gap-6 px-6 py-6">
+                    <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+                      <div
+                        className="border border-[#282623] bg-[#161513] px-6 py-6"
+                        style={SURFACE_RADIUS_STYLE}
+                      >
+                        <div className="mb-5 flex flex-wrap items-center gap-2 text-[0.68rem] uppercase tracking-[0.3em] text-[#9f9b92]">
+                          <span
+                            className="border border-[#36332f] bg-[#1c1b18] px-3 py-1 text-[#d9d5cc]"
+                            style={SURFACE_RADIUS_STYLE}
+                          >
+                            Enterprise AI Agents
+                          </span>
+                          <span
+                            className="border border-[#2f2d29] bg-[#12110f] px-3 py-1 text-[#9f9b92]"
+                            style={SURFACE_RADIUS_STYLE}
+                          >
+                            Agent: {focusAgentLabel}
+                          </span>
+                          <span
+                            className="border border-[#2f2d29] bg-[#12110f] px-3 py-1 text-[#9f9b92]"
+                            style={SURFACE_RADIUS_STYLE}
+                          >
+                            {isLoading ? "Streaming" : "Ready"}
+                          </span>
+                        </div>
+
+                        <div className="space-y-3">
+                          <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-[#f3f1ea] sm:text-5xl">
+                            Enterprise Intel System
+                          </h1>
+                          <p className="max-w-2xl text-sm leading-7 text-[#b3afa6] sm:text-base">
+                            Multi-agent enterprise intelligence, powered by OpenAI Agents SDK
+                          </p>
+                          <CreatorCredit />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                        <div
+                          className="border border-[#282623] bg-[#161513] px-5 py-4"
+                          style={SURFACE_RADIUS_STYLE}
+                        >
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-xs uppercase tracking-[0.28em] text-gray-500">
+                              Run status
+                            </span>
+                            <span className="text-xs text-[#f3f1ea]">
+                              {isLoading ? "In progress" : "Standing by"}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-300 leading-relaxed">
+                            {status}
+                          </p>
+                        </div>
+
+                        <div
+                          className="border border-[#282623] bg-[#161513] px-5 py-6"
+                          style={SURFACE_RADIUS_STYLE}
+                        >
+                          <div className="mb-3 flex items-center justify-between">
+                            <span className="text-xs uppercase tracking-[0.28em] text-gray-500">
+                              How it works
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-300 leading-relaxed">
+                            Enter company info and run analysis. Select the correct
+                            company from the results. Triage agent selects the
+                            agent team, specialists fan out in parallel, research
+                            aggregates their findings, synthesis finishes.
+                          </p>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section
+                      className="space-y-4 border border-[#282623] bg-[#161513] px-6 py-6"
+                      style={SURFACE_RADIUS_STYLE}
+                    >
+                <div
+                  className="inline-flex border border-[#2f2d29] bg-[#12110f] p-1"
+                  style={SURFACE_RADIUS_STYLE}
+                >
                   {(["intel", "compare"] as Mode[]).map((modeOption) => {
                     const active = mode === modeOption;
                     return (
                       <button
                         key={modeOption}
                         className={`px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] transition ${
-                          active ? "bg-red-500 text-white" : "text-gray-200 hover:bg-gray-800"
+                          active
+                            ? "border border-[#3b3935] bg-[#2a2825] text-[#f3f1ea]"
+                            : "text-[#9f9b92] hover:bg-[#1a1917] hover:text-[#ebe8e1]"
                         }`}
                         disabled={isLoading}
                         onClick={() => handleModeChange(modeOption)}
@@ -1705,34 +3253,75 @@ export default function Home() {
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
                       <div className="flex flex-col gap-4 lg:basis-[35%]">
                         <label className="block space-y-2">
-                          <span className="text-xs uppercase tracking-[0.24em] text-gray-300">
+                          <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
                             Company
                           </span>
                           <input
-                            className="w-full border border-gray-600 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-red-400/60 focus:ring-2 focus:ring-red-500/15"
-                            onChange={(event) => setIntelCompany(event.target.value)}
+                            className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                            onChange={(event) => {
+                              setIntelCompany(event.target.value);
+                              setResolvedIntelDomain(null);
+                            }}
                             placeholder="Enter a company name"
                             style={SURFACE_RADIUS_STYLE}
                             value={intelCompany}
                           />
                         </label>
 
+                        {resolvedIntelDomain && !intelCompanyUrl.trim() ? (
+                          <a
+                            className="inline-flex w-fit items-center border border-[#34312d] bg-[#1b1a18] px-3 py-1.5 font-mono text-[0.72rem] text-[#9bb4ff]"
+                            href={normalizeUrlForContext(resolvedIntelDomain)}
+                            rel="noreferrer"
+                            style={SURFACE_RADIUS_STYLE}
+                            target="_blank"
+                          >
+                            {resolvedIntelDomain}
+                          </a>
+                        ) : null}
+
+                        {resolvingLookup.intel ? (
+                          <InlineResolvingStatus label="Identifying company..." />
+                        ) : null}
+
+                        <label className="block space-y-2">
+                          <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                            WEBSITE URL
+                          </span>
+                          <input
+                            className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                            onChange={(event) => setIntelCompanyUrl(event.target.value)}
+                            placeholder="https://company.com (optional)"
+                            style={SURFACE_RADIUS_STYLE}
+                            value={intelCompanyUrl}
+                          />
+                          <p className="text-xs text-[#8f8a7f]">
+                            Providing a URL skips company disambiguation and improves accuracy
+                          </p>
+                        </label>
+
                         <button
-                          className="inline-flex w-full items-center justify-center bg-red-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:bg-gray-700 disabled:text-gray-300"
+                          className={`inline-flex w-full items-center justify-center border border-[#34312d] bg-[#2a2825] px-4 py-3 text-sm font-semibold text-[#f3f1ea] transition hover:bg-[#34312d] disabled:cursor-not-allowed disabled:border-[#2a2825] disabled:bg-[#1b1a18] disabled:text-[#7f7b73] ${
+                            resolvingLookup.intel ? "opacity-85" : ""
+                          }`}
                           disabled={isLoading}
                           style={SURFACE_RADIUS_STYLE}
                           type="submit"
                         >
-                          {isLoading ? "Running Analysis..." : "Run Analysis"}
+                          {isLoading
+                            ? "Running Analysis..."
+                            : resolvingLookup.intel
+                              ? "Identifying company..."
+                              : "Run Analysis"}
                         </button>
                       </div>
 
                       <label className="flex min-h-[10.5rem] flex-col space-y-2 lg:min-h-0 lg:flex-1 lg:basis-[65%]">
-                        <span className="text-xs uppercase tracking-[0.24em] text-gray-300">
+                        <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
                           Request
                         </span>
                         <textarea
-                          className="min-h-[10.5rem] w-full flex-1 border border-gray-600 bg-gray-900 px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-red-400/60 focus:ring-2 focus:ring-red-500/15"
+                          className="min-h-[10.5rem] w-full flex-1 border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm leading-7 text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
                           onChange={(event) => setIntelRequest(event.target.value)}
                           placeholder="Describe the analysis you want"
                           style={SURFACE_RADIUS_STYLE}
@@ -1741,44 +3330,165 @@ export default function Home() {
                       </label>
                     </div>
 
+                    {currentResolution ? (
+                      <div
+                        className="space-y-4 border border-[#2a2d36] bg-[#13161e] px-5 py-5"
+                        style={SURFACE_RADIUS_STYLE}
+                      >
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.26em] text-white">
+                            Which company did you mean?
+                          </p>
+                          <p className="text-sm text-gray-400">
+                            Select the correct match to ensure accurate intelligence
+                          </p>
+                        </div>
+
+                        <div className="space-y-3">
+                          {currentResolution.matches.map((match, index) => {
+                            const confidence = (match.confidence ?? "low").toLowerCase();
+                            const confidenceColor =
+                              confidence === "high"
+                                ? "#4ade80"
+                                : confidence === "medium"
+                                  ? "#facc15"
+                                  : "#9ca3af";
+                            const cardKey =
+                              match.domain || match.name || `${currentResolution.target}-${index}`;
+                            const selected = selectedResolutionDomain === cardKey;
+                            return (
+                              <button
+                                key={cardKey}
+                                className={`w-full border px-4 py-4 text-left transition ${
+                                  selected
+                                    ? "border-blue-500 bg-[#1a2035]"
+                                    : "border-[#2a2d36] bg-[#13161e] hover:border-[#3d4150]"
+                                }`}
+                                onClick={() => {
+                                  setSelectedResolutionDomain(cardKey);
+                                  window.setTimeout(() => applyResolutionSelection(match), 80);
+                                }}
+                                style={SURFACE_RADIUS_STYLE}
+                                type="button"
+                              >
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="space-y-2">
+                                    <p className="text-sm font-semibold text-white">
+                                      {match.name || currentResolution.companyName}
+                                    </p>
+                                    <p className="text-sm text-gray-400">
+                                      {match.description || "No description available."}
+                                    </p>
+                                    {match.domain ? (
+                                      <a
+                                        className="font-mono text-xs text-blue-400 underline underline-offset-4"
+                                        href={normalizeUrlForContext(match.domain)}
+                                        onClick={(event) => event.stopPropagation()}
+                                        rel="noreferrer"
+                                        target="_blank"
+                                      >
+                                        {getDisplayDomain(match.domain)}
+                                      </a>
+                                    ) : null}
+                                    <div className="flex flex-wrap gap-2">
+                                      {match.industry ? (
+                                        <span
+                                          className="border border-[#343846] bg-[#191d27] px-2 py-1 text-[0.68rem] uppercase tracking-[0.2em] text-gray-300"
+                                          style={SURFACE_RADIUS_STYLE}
+                                        >
+                                          {match.industry}
+                                        </span>
+                                      ) : null}
+                                      {match.stage ? (
+                                        <span
+                                          className="border border-[#343846] bg-[#191d27] px-2 py-1 text-[0.68rem] uppercase tracking-[0.2em] text-gray-300"
+                                          style={SURFACE_RADIUS_STYLE}
+                                        >
+                                          {match.stage}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                                    style={{ backgroundColor: confidenceColor }}
+                                  />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <button
+                          className="text-sm text-gray-400 transition hover:text-gray-200"
+                          onClick={() => applyResolutionSelection(null)}
+                          type="button"
+                        >
+                          None of these - search anyway
+                        </button>
+                      </div>
+                    ) : null}
+
                     {isDone && usageStats ? <UsageSummary usageStats={usageStats} /> : null}
                   </form>
                 ) : (
                   <form className="space-y-4" onSubmit={handleCompareSubmit}>
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
                       <div className="space-y-4 lg:basis-1/2">
-                        <p className="text-xs uppercase tracking-[0.24em] text-gray-300">
-                          Your Company
+                        <p className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                          BASE COMPANY
                         </p>
 
                         <label className="block space-y-2">
-                          <span className="text-xs uppercase tracking-[0.24em] text-gray-300">
+                          <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
                             Company Name
                           </span>
                           <input
-                            className="w-full border border-gray-600 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-red-400/60 focus:ring-2 focus:ring-red-500/15"
-                            onChange={(event) => setBaseCompany(event.target.value)}
-                            placeholder="Enter your company"
+                            className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                            onChange={(event) => {
+                              setBaseCompany(event.target.value);
+                              setResolvedBaseDomain(null);
+                            }}
+                            placeholder="Enter company name"
                             style={SURFACE_RADIUS_STYLE}
                             value={baseCompany}
                           />
                         </label>
 
+                        {resolvedBaseDomain && !baseUrl.trim() ? (
+                          <a
+                            className="inline-flex w-fit items-center border border-[#34312d] bg-[#1b1a18] px-3 py-1.5 font-mono text-[0.72rem] text-[#9bb4ff]"
+                            href={normalizeUrlForContext(resolvedBaseDomain)}
+                            rel="noreferrer"
+                            style={SURFACE_RADIUS_STYLE}
+                            target="_blank"
+                          >
+                            {resolvedBaseDomain}
+                          </a>
+                        ) : null}
+
+                        {resolvingLookup.base ? (
+                          <InlineResolvingStatus label="Identifying company..." />
+                        ) : null}
+
                         <label className="block space-y-2">
-                          <span className="text-xs uppercase tracking-[0.24em] text-gray-300">
-                            Website URL
+                          <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                            BASE URL
                           </span>
                           <input
-                            className="w-full border border-gray-600 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-red-400/60 focus:ring-2 focus:ring-red-500/15"
+                            className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
                             onChange={(event) => setBaseUrl(event.target.value)}
                             placeholder="https://..."
                             style={SURFACE_RADIUS_STYLE}
                             value={baseUrl}
                           />
+                          <p className="text-xs text-[#8f8a7f]">
+                            Providing a URL skips company disambiguation and improves accuracy
+                          </p>
                         </label>
 
                         <div className="space-y-2">
-                          <p className="text-xs uppercase tracking-[0.24em] text-gray-300">
+                          <p className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
                             Upload Docs
                           </p>
                           <input
@@ -1790,16 +3500,16 @@ export default function Home() {
                             type="file"
                           />
                           <div
-                            className="cursor-pointer border border-dashed border-gray-500 bg-gray-900 px-4 py-6 text-center transition hover:border-red-400/60 hover:bg-gray-800"
+                            className="cursor-pointer border border-dashed border-[#3b3935] bg-[#12110f] px-4 py-6 text-center transition hover:border-[#6d685f] hover:bg-[#171614]"
                             onClick={openFilePicker}
                             onDragOver={(event) => event.preventDefault()}
                             onDrop={handleFileDrop}
                             style={SURFACE_RADIUS_STYLE}
                           >
-                            <p className="text-sm font-medium text-white">
+                            <p className="text-sm font-medium text-[#f3f1ea]">
                               Drop files here or click to browse
                             </p>
-                            <p className="mt-2 text-xs leading-6 text-gray-300">
+                            <p className="mt-2 text-xs leading-6 text-[#a6a39b]">
                               PDF, DOCX, CSV, TXT - pitch deck, financials, reports
                             </p>
                           </div>
@@ -1808,12 +3518,12 @@ export default function Home() {
                               {compareFiles.map((file, index) => (
                                 <div
                                   key={`${file.name}-${index}`}
-                                  className="inline-flex items-center gap-2 border border-gray-500 bg-gray-800 px-3 py-2 text-xs text-gray-200"
+                                  className="inline-flex items-center gap-2 border border-[#34312d] bg-[#1b1a18] px-3 py-2 text-xs text-[#ddd9d1]"
                                   style={SURFACE_RADIUS_STYLE}
                                 >
                                   <span>{file.name}</span>
                                   <button
-                                    className="text-gray-300 transition hover:text-white"
+                                    className="text-[#9f9b92] transition hover:text-[#f3f1ea]"
                                     onClick={(event) => {
                                       event.preventDefault();
                                       removeCompareFile(index);
@@ -1829,57 +3539,221 @@ export default function Home() {
                         </div>
 
                         <button
-                          className="inline-flex w-full items-center justify-center bg-red-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:bg-gray-700 disabled:text-gray-300"
+                          className={`inline-flex w-full items-center justify-center border border-[#34312d] bg-[#2a2825] px-4 py-3 text-sm font-semibold text-[#f3f1ea] transition hover:bg-[#34312d] disabled:cursor-not-allowed disabled:border-[#2a2825] disabled:bg-[#1b1a18] disabled:text-[#7f7b73] ${
+                            resolvingLookup.base || resolvingLookup.target ? "opacity-85" : ""
+                          }`}
                           disabled={isLoading}
                           style={SURFACE_RADIUS_STYLE}
                           type="submit"
                         >
-                          {isLoading ? "Running Comparison..." : "Run Comparison"}
+                          {isLoading
+                            ? "Running Comparison..."
+                            : resolvingLookup.base || resolvingLookup.target
+                              ? "Identifying company..."
+                              : "Run Comparison"}
                         </button>
                       </div>
 
                       <div className="space-y-4 lg:basis-1/2">
-                        <p className="text-xs uppercase tracking-[0.24em] text-gray-300">
-                          Competitor
+                        <p className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                          TARGET COMPANY
                         </p>
 
                         <label className="block space-y-2">
-                          <span className="text-xs uppercase tracking-[0.24em] text-gray-300">
+                          <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
                             Company Name
                           </span>
                           <input
-                            className="w-full border border-gray-600 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-red-400/60 focus:ring-2 focus:ring-red-500/15"
-                            onChange={(event) =>
-                              setCompetitorCompany(event.target.value)
-                            }
+                            className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                            onChange={(event) => {
+                              setCompetitorCompany(event.target.value);
+                              setResolvedTargetDomain(null);
+                            }}
                             placeholder="Enter a competitor"
                             style={SURFACE_RADIUS_STYLE}
                             value={competitorCompany}
                           />
                         </label>
 
+                        {resolvedTargetDomain && !targetUrl.trim() ? (
+                          <a
+                            className="inline-flex w-fit items-center border border-[#34312d] bg-[#1b1a18] px-3 py-1.5 font-mono text-[0.72rem] text-[#9bb4ff]"
+                            href={normalizeUrlForContext(resolvedTargetDomain)}
+                            rel="noreferrer"
+                            style={SURFACE_RADIUS_STYLE}
+                            target="_blank"
+                          >
+                            {resolvedTargetDomain}
+                          </a>
+                        ) : null}
+
+                        {resolvingLookup.target ? (
+                          <InlineResolvingStatus label="Identifying company..." />
+                        ) : null}
+
                         <label className="block space-y-2">
-                          <span className="text-xs uppercase tracking-[0.24em] text-gray-300">
-                            Focus
+                          <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                            TARGET URL
                           </span>
                           <input
-                            className="w-full border border-gray-600 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-red-400/60 focus:ring-2 focus:ring-red-500/15"
-                            onChange={(event) => setCompareFocus(event.target.value)}
-                            placeholder='e.g. "pricing strategy and product roadmap"'
+                            className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                            onChange={(event) => setTargetUrl(event.target.value)}
+                            placeholder="https://..."
                             style={SURFACE_RADIUS_STYLE}
-                            value={compareFocus}
+                            value={targetUrl}
                           />
+                          <p className="text-xs text-[#8f8a7f]">
+                            Providing a URL skips company disambiguation and improves accuracy
+                          </p>
                         </label>
+
+                        <div className="space-y-3">
+                          <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                            Focus
+                          </span>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {COMPARE_FOCUS_OPTIONS.map((focusArea) => {
+                              const selected = compareFocusAreas.includes(focusArea);
+                              return (
+                                <button
+                                  key={focusArea}
+                                  className={`border px-3 py-2 text-left text-xs font-medium transition ${
+                                    selected
+                                      ? "border-blue-500 bg-blue-500 text-white"
+                                      : "border-gray-600 bg-transparent text-gray-400 hover:border-gray-400 hover:text-gray-300"
+                                  }`}
+                                  onClick={() => toggleCompareFocusArea(focusArea)}
+                                  style={SURFACE_RADIUS_STYLE}
+                                  type="button"
+                                >
+                                  {focusArea}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {otherFocusSelected ? (
+                            <input
+                              className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                              onChange={(event) => setCompareCustomFocus(event.target.value)}
+                              placeholder="Describe your custom focus..."
+                              style={SURFACE_RADIUS_STYLE}
+                              value={compareCustomFocus}
+                            />
+                          ) : null}
+                        </div>
                       </div>
                     </div>
+
+                    {currentResolution ? (
+                      <div
+                        className="space-y-4 border border-[#2a2d36] bg-[#13161e] px-5 py-5"
+                        style={SURFACE_RADIUS_STYLE}
+                      >
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.26em] text-white">
+                            Which company did you mean?
+                          </p>
+                          <p className="text-sm text-gray-400">
+                            Select the correct match to ensure accurate intelligence
+                          </p>
+                        </div>
+
+                        <div className="space-y-3">
+                          {currentResolution.matches.map((match, index) => {
+                            const confidence = (match.confidence ?? "low").toLowerCase();
+                            const confidenceColor =
+                              confidence === "high"
+                                ? "#4ade80"
+                                : confidence === "medium"
+                                  ? "#facc15"
+                                  : "#9ca3af";
+                            const cardKey =
+                              match.domain || match.name || `${currentResolution.target}-${index}`;
+                            const selected = selectedResolutionDomain === cardKey;
+                            return (
+                              <button
+                                key={cardKey}
+                                className={`w-full border px-4 py-4 text-left transition ${
+                                  selected
+                                    ? "border-blue-500 bg-[#1a2035]"
+                                    : "border-[#2a2d36] bg-[#13161e] hover:border-[#3d4150]"
+                                }`}
+                                onClick={() => {
+                                  setSelectedResolutionDomain(cardKey);
+                                  window.setTimeout(() => applyResolutionSelection(match), 80);
+                                }}
+                                style={SURFACE_RADIUS_STYLE}
+                                type="button"
+                              >
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="space-y-2">
+                                    <p className="text-sm font-semibold text-white">
+                                      {match.name || currentResolution.companyName}
+                                    </p>
+                                    <p className="text-sm text-gray-400">
+                                      {match.description || "No description available."}
+                                    </p>
+                                    {match.domain ? (
+                                      <a
+                                        className="font-mono text-xs text-blue-400 underline underline-offset-4"
+                                        href={normalizeUrlForContext(match.domain)}
+                                        onClick={(event) => event.stopPropagation()}
+                                        rel="noreferrer"
+                                        target="_blank"
+                                      >
+                                        {getDisplayDomain(match.domain)}
+                                      </a>
+                                    ) : null}
+                                    <div className="flex flex-wrap gap-2">
+                                      {match.industry ? (
+                                        <span
+                                          className="border border-[#343846] bg-[#191d27] px-2 py-1 text-[0.68rem] uppercase tracking-[0.2em] text-gray-300"
+                                          style={SURFACE_RADIUS_STYLE}
+                                        >
+                                          {match.industry}
+                                        </span>
+                                      ) : null}
+                                      {match.stage ? (
+                                        <span
+                                          className="border border-[#343846] bg-[#191d27] px-2 py-1 text-[0.68rem] uppercase tracking-[0.2em] text-gray-300"
+                                          style={SURFACE_RADIUS_STYLE}
+                                        >
+                                          {match.stage}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                                    style={{ backgroundColor: confidenceColor }}
+                                  />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <button
+                          className="text-sm text-gray-400 transition hover:text-gray-200"
+                          onClick={() => applyResolutionSelection(null)}
+                          type="button"
+                        >
+                          None of these - search anyway
+                        </button>
+                      </div>
+                    ) : null}
 
                     {isDone && usageStats ? <UsageSummary usageStats={usageStats} /> : null}
                   </form>
                 )}
               </section>
 
-              <section className="space-y-4">
-                <p className="text-xs uppercase tracking-[0.28em] text-gray-300">
+              <section
+                className="space-y-4 border border-[#282623] bg-[#161513] px-6 py-6"
+                style={SURFACE_RADIUS_STYLE}
+              >
+                <p className="text-xs uppercase tracking-[0.28em] text-[#8f8a7f]">
                   Agent Roster
                 </p>
                 <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-5">
@@ -1932,22 +3806,22 @@ export default function Home() {
                   })}
                 </div>
 
-                <div className="min-h-5 text-xs uppercase tracking-[0.24em] text-gray-300">
+                <div className="min-h-5 text-xs uppercase tracking-[0.24em] text-[#9f9b92]">
                   {rosterMessage || "\u00a0"}
                 </div>
               </section>
 
               {mode === "compare" ? (
                 <section
-                  className="border border-gray-600 bg-gray-900 p-5"
+                  className="border border-[#282623] bg-[#161513] p-5"
                   style={SURFACE_RADIUS_STYLE}
                 >
                   <div className="mb-4 flex items-center justify-between">
                     <div>
-                      <h2 className="text-lg font-semibold text-white">
+                      <h2 className="text-lg font-semibold text-[#f3f1ea]">
                         Base Company Context
                       </h2>
-                      <p className="text-sm text-gray-300">
+                      <p className="text-sm text-[#a6a39b]">
                         Context Agent combines uploaded material with live web context.
                       </p>
                     </div>
@@ -1969,16 +3843,16 @@ export default function Home() {
               ) : null}
 
               <section
-                className="border border-gray-600 bg-gray-900 p-5"
+                className="border border-[#282623] bg-[#161513] p-5"
                 ref={specialistPanelRef}
                 style={SURFACE_RADIUS_STYLE}
               >
                 <div className="mb-4 flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-white">
+                    <h2 className="text-lg font-semibold text-[#f3f1ea]">
                       Specialist Output
                     </h2>
-                    <p className="text-sm text-gray-300">
+                    <p className="text-sm text-[#a6a39b]">
                       {mode === "intel"
                         ? triageReasoning ||
                           "Specialist agents will appear here once triage assembles the team."
@@ -1986,7 +3860,7 @@ export default function Home() {
                     </p>
                   </div>
                   <button
-                    className="border border-gray-500 bg-gray-800 px-3 py-2 text-xs uppercase tracking-[0.22em] text-gray-200 transition hover:border-gray-400 hover:bg-gray-700"
+                    className="border border-[#34312d] bg-[#1b1a18] px-3 py-2 text-xs uppercase tracking-[0.22em] text-[#ddd9d1] transition hover:border-[#4a4742] hover:bg-[#24221f]"
                     onClick={() => setSpecialistPanelCollapsed((current) => !current)}
                     style={SURFACE_RADIUS_STYLE}
                     type="button"
@@ -2014,15 +3888,15 @@ export default function Home() {
                                 ...SURFACE_RADIUS_STYLE,
                                 borderColor: isSelectedTab
                                   ? agent.accentColor
-                                  : "rgba(107, 114, 128, 1)",
+                                  : "#35322f",
                                 backgroundColor: isSelectedTab
                                   ? `${agent.accentColor}22`
-                                  : "rgba(55, 65, 81, 1)",
+                                  : "#23211e",
                                 boxShadow:
                                   isRunning && isSelectedTab
                                     ? `0 0 20px ${agent.glowColor}`
                                     : "none",
-                                color: isSelectedTab ? "#ffffff" : "#e5e7eb",
+                                color: isSelectedTab ? "#ffffff" : "#d7d3cb",
                               }}
                               type="button"
                             >
@@ -2032,14 +3906,14 @@ export default function Home() {
                           );
                         })
                       ) : (
-                        <div className="text-xs uppercase tracking-[0.22em] text-gray-300">
+                        <div className="text-xs uppercase tracking-[0.22em] text-[#9f9b92]">
                           Waiting for the pipeline to activate specialist agents.
                         </div>
                       )}
                     </div>
 
                     <div
-                      className="h-[22rem] overflow-y-auto border border-gray-600 bg-gray-900 px-5 py-5"
+                      className="h-[22rem] overflow-y-auto border border-[#2c2a27] bg-[#12110f] px-5 py-5"
                       ref={specialistPanelBodyRef}
                       style={SURFACE_RADIUS_STYLE}
                     >
@@ -2049,7 +3923,7 @@ export default function Home() {
                           placeholder={`Waiting for ${getAgentConfig(selectedSpecialistTab).name} output.`}
                         />
                       ) : (
-                        <div className="flex h-full items-center justify-center text-center text-sm leading-7 text-gray-300">
+                        <div className="flex h-full items-center justify-center text-center text-sm leading-7 text-[#a6a39b]">
                           Run a request to stream specialist output here.
                         </div>
                       )}
@@ -2059,22 +3933,22 @@ export default function Home() {
               </section>
 
               <section
-                className="border border-gray-600 bg-gray-900 p-5"
+                className="border border-[#282623] bg-[#161513] p-5"
                 style={SURFACE_RADIUS_STYLE}
               >
                 <div className="mb-4 flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-white">
+                    <h2 className="text-lg font-semibold text-[#f3f1ea]">
                       Pipeline Output
                     </h2>
-                    <p className="text-sm text-gray-300">
+                    <p className="text-sm text-[#a6a39b]">
                       {mode === "intel"
                         ? "Research and synthesis stream below the specialist team."
                         : "Research, comparison, and synthesis stream after the specialist phase."}
                     </p>
                   </div>
                   <div
-                    className="border border-red-500/20 bg-red-500/10 px-3 py-1 text-xs uppercase tracking-[0.22em] text-red-200"
+                    className="border border-[#34312d] bg-[#1b1a18] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[#ddd9d1]"
                     style={SURFACE_RADIUS_STYLE}
                   >
                     {isLoading ? "Live" : "Idle"}
@@ -2163,25 +4037,101 @@ export default function Home() {
 
                 {isDone && usageStats ? (
                   <div className="mt-5 flex flex-col items-center gap-3">
-                    <button
-                      className="inline-flex items-center justify-center border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-100 transition hover:border-red-400/40 hover:bg-red-500/20"
-                      onClick={handleDownloadAnalysis}
-                      style={SURFACE_RADIUS_STYLE}
-                      type="button"
-                    >
-                      Download Analysis
-                    </button>
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      <button
+                        className="inline-flex items-center justify-center border border-[#34312d] bg-[#1b1a18] px-4 py-3 text-sm font-semibold text-[#f3f1ea] transition hover:bg-[#24221f]"
+                        onClick={() => setActiveView("dashboard")}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        View Graph Dashboard
+                      </button>
+                      <button
+                        className="inline-flex items-center justify-center border border-[#34312d] bg-[#2a2825] px-4 py-3 text-sm font-semibold text-[#f3f1ea] transition hover:bg-[#34312d]"
+                        onClick={handleDownloadAnalysis}
+                        style={SURFACE_RADIUS_STYLE}
+                        type="button"
+                      >
+                        Download Analysis
+                      </button>
+                    </div>
                     <UsageSummary centered usageStats={usageStats} />
                   </div>
                 ) : null}
               </section>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </section>
         </div>
       </div>
 
+      {showApiKeyPrompt ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 px-4 print:hidden">
+          <div
+            className="w-full max-w-md border border-[#2a2d36] bg-[#13161e] p-5 shadow-2xl"
+            style={SURFACE_RADIUS_STYLE}
+          >
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.24em] text-gray-500">
+                API KEY
+              </p>
+              <h2 className="text-lg font-semibold text-white">
+                Change API Key
+              </h2>
+              <p className="text-sm text-gray-400">
+                Update the locally stored key used for this workspace shell.
+              </p>
+            </div>
+
+            <label className="mt-5 block space-y-2">
+              <span className="text-xs uppercase tracking-[0.24em] text-[#8f8a7f]">
+                OpenAI API Key
+              </span>
+              <input
+                className="w-full border border-[#2d2b28] bg-[#12110f] px-4 py-3 text-sm text-[#f3f1ea] outline-none transition placeholder:text-[#76726a] focus:border-[#6d685f] focus:ring-2 focus:ring-[#6d685f]/15"
+                onChange={(event) => setApiKeyInput(event.target.value)}
+                placeholder="sk-..."
+                style={SURFACE_RADIUS_STYLE}
+                type="password"
+                value={apiKeyInput}
+              />
+            </label>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                className="border border-[#34312d] bg-[#1b1a18] px-4 py-2 text-xs font-semibold text-[#ddd9d1] transition hover:bg-[#24221f]"
+                onClick={() => {
+                  setApiKeyInput(storedApiKey);
+                  setShowApiKeyPrompt(false);
+                }}
+                style={SURFACE_RADIUS_STYLE}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="border border-[#34312d] bg-[#2a2825] px-4 py-2 text-xs font-semibold text-[#f3f1ea] transition hover:bg-[#34312d] disabled:cursor-not-allowed disabled:border-[#2a2825] disabled:bg-[#1b1a18] disabled:text-[#7f7b73]"
+                disabled={!apiKeyInput.trim()}
+                onClick={handleApiKeySave}
+                style={SURFACE_RADIUS_STYLE}
+                type="button"
+              >
+                Save Key
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="hidden print:block">
-        {mode === "compare" ? (
+        {isPrintingDashboard && chartData ? (
+          <div className="dashboard-print print-doc px-12 py-10 text-black">
+            <Dashboard data={chartData} />
+          </div>
+        ) : mode === "compare" ? (
           <div className="print-doc px-12 py-10 text-black">
             <section className="print-cover">
               <h1 className="mt-4 text-4xl font-semibold tracking-tight text-black">
@@ -2261,15 +4211,138 @@ export default function Home() {
             linear-gradient(180deg, #020202 0%, #09090b 42%, #000000 100%);
         }
 
+        .markdown-body {
+          color: #94a3b8;
+        }
+
+        .markdown-body h1 {
+          margin-bottom: 0.5rem;
+          font-size: 1.25rem;
+          font-weight: 700;
+          line-height: 1.35;
+          color: #ffffff;
+        }
+
+        .markdown-body h2 {
+          margin-top: 1rem;
+          margin-bottom: 0.4rem;
+          font-size: 1.1rem;
+          font-weight: 600;
+          line-height: 1.4;
+          color: #e2e8f0;
+        }
+
+        .markdown-body h3 {
+          margin-top: 0.85rem;
+          margin-bottom: 0.3rem;
+          font-size: 0.95rem;
+          font-weight: 600;
+          line-height: 1.45;
+          color: #cbd5e1;
+        }
+
+        .markdown-body p {
+          margin-bottom: 0.5rem;
+          font-size: 0.875rem;
+          font-weight: 400;
+          line-height: 1.7;
+          color: #94a3b8;
+        }
+
+        .markdown-body strong {
+          font-weight: 700;
+          color: #e2e8f0;
+        }
+
+        .markdown-body em {
+          font-style: italic;
+          color: #cbd5e1;
+        }
+
+        .markdown-body ul,
+        .markdown-body ol {
+          margin: 0.75rem 0;
+          padding-left: 1.25rem;
+        }
+
+        .markdown-body li {
+          margin-bottom: 0.35rem;
+          font-size: 0.875rem;
+          font-weight: 400;
+          line-height: 1.6;
+          color: #94a3b8;
+        }
+
+        .markdown-body li strong {
+          font-weight: 700;
+          color: #e2e8f0;
+        }
+
+        .markdown-body a {
+          color: #e2e8f0;
+          text-decoration: underline;
+          text-decoration-color: rgba(148, 163, 184, 0.55);
+          text-underline-offset: 3px;
+        }
+
+        .markdown-body hr {
+          margin: 1rem 0;
+          border: 0;
+          border-top: 1px solid #374151;
+        }
+
+        .markdown-body code {
+          border-radius: 3px;
+          background: #1f2937;
+          padding: 0.08rem 0.35rem;
+          font-size: 0.82em;
+          color: #e2e8f0;
+        }
+
         @media print {
           body {
             background: #ffffff !important;
             color: #111111 !important;
           }
 
+          .recharts-wrapper {
+            display: block !important;
+          }
+
+          .recharts-surface {
+            display: block !important;
+          }
+
           .print-doc {
             font-family:
               ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+          }
+
+          .dashboard-print,
+          .dashboard-print * {
+            color: #111111 !important;
+          }
+
+          .dashboard-print {
+            font-family:
+              ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+
+          .dashboard-stat-card {
+            border: 1px solid #ccc !important;
+            background: white !important;
+            color: black !important;
+            padding: 8px !important;
+          }
+
+          .dashboard-chart-container {
+            page-break-inside: avoid;
+            margin-bottom: 20px;
+          }
+
+          .dashboard-print .dashboard-panel {
+            border: 1px solid #ccc !important;
+            background: white !important;
           }
 
           .print-section {
@@ -2290,6 +4363,36 @@ export default function Home() {
           .print-markdown code {
             background: #f3f4f6 !important;
             color: #111111 !important;
+          }
+
+          .markdown-body h1 {
+            font-size: 18pt;
+            font-weight: bold;
+            color: #000 !important;
+          }
+
+          .markdown-body h2 {
+            font-size: 14pt;
+            font-weight: bold;
+            color: #111 !important;
+          }
+
+          .markdown-body h3 {
+            font-size: 12pt;
+            font-weight: 600;
+            color: #222 !important;
+          }
+
+          .markdown-body p,
+          .markdown-body li {
+            font-size: 10pt;
+            font-weight: 400;
+            color: #333 !important;
+          }
+
+          .markdown-body strong {
+            font-weight: bold;
+            color: #000 !important;
           }
         }
       `}</style>

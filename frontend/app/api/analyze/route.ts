@@ -11,6 +11,7 @@ function buildBackendUrl(request: NextRequest): URL {
 
   const company = request.nextUrl.searchParams.get("company");
   const analysisRequest = request.nextUrl.searchParams.get("request");
+  const companyUrl = request.nextUrl.searchParams.get("company_url");
 
   if (company) {
     url.searchParams.set("company", company);
@@ -18,6 +19,10 @@ function buildBackendUrl(request: NextRequest): URL {
 
   if (analysisRequest) {
     url.searchParams.set("request", analysisRequest);
+  }
+
+  if (companyUrl) {
+    url.searchParams.set("company_url", companyUrl);
   }
 
   return url;
