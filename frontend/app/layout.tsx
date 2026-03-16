@@ -6,9 +6,9 @@ export const metadata: Metadata = {
   title: "Enterprise AI Agent Demo",
   description: "A full-stack demo app powered by the OpenAI Agents SDK.",
   icons: {
-    icon: "/brand-mark.svg?v=20260316",
-    shortcut: "/brand-mark.svg?v=20260316",
-    apple: "/brand-mark.svg?v=20260316",
+    icon: "/brand-mark.png?v=20260316png",
+    shortcut: "/brand-mark.png?v=20260316png",
+    apple: "/brand-mark.png?v=20260316png",
   },
 };
 

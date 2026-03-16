@@ -2917,7 +2917,7 @@ export default function Home() {
                       <img
                         alt="Enterprise Intel System logo"
                         className="h-[38px] w-[38px] object-contain"
-                        src="/brand-mark.svg?v=20260316"
+                        src="/brand-mark.png?v=20260316png"
                       />
                     </div>
                     <div>
