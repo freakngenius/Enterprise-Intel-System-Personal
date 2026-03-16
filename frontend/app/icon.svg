@@ -1,6 +1,139 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="8" fill="#050505" />
-  <path d="M16 18h32v8H24v10h20v8H24v12h-8V18z" fill="#f43f5e" />
-  <path d="M34 18h14v8H34z" fill="#fafafa" opacity=".9" />
-  <path d="M34 38h14v8H34z" fill="#fafafa" opacity=".75" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <filter id="glowGreen" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="glowPurple" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="glowOrange" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <linearGradient id="greenSide" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d2411" />
+      <stop offset="100%" stop-color="#08110b" />
+    </linearGradient>
+    <linearGradient id="purpleSide" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#231030" />
+      <stop offset="100%" stop-color="#0e0716" />
+    </linearGradient>
+    <linearGradient id="orangeSide" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2f170c" />
+      <stop offset="100%" stop-color="#120804" />
+    </linearGradient>
+    <g id="hexNode">
+      <polygon
+        points="0,-12 10.4,-6 10.4,6 0,12 -10.4,6 -10.4,-6"
+        fill="#080a08"
+        stroke="#7dff88"
+        stroke-width="2.4"
+        filter="url(#glowGreen)"
+      />
+      <polygon
+        points="0,-6 5.2,-3 5.2,3 0,6 -5.2,3 -5.2,-3"
+        fill="#7dff88"
+        opacity="0.9"
+        filter="url(#glowGreen)"
+      />
+    </g>
+  </defs>
+
+  <rect width="256" height="256" rx="20" fill="#343434" />
+
+  <g opacity="0.98" filter="url(#glowOrange)">
+    <polygon
+      points="44,188 128,150 212,188 128,226"
+      fill="#060606"
+      stroke="#ff9a56"
+      stroke-width="2.4"
+    />
+    <polygon
+      points="44,188 44,220 128,256 128,226"
+      fill="url(#orangeSide)"
+      stroke="#ff9a56"
+      stroke-width="2.4"
+    />
+    <polygon
+      points="212,188 212,220 128,256 128,226"
+      fill="url(#orangeSide)"
+      stroke="#ff9a56"
+      stroke-width="2.4"
+    />
+  </g>
+
+  <g opacity="0.98" filter="url(#glowPurple)">
+    <polygon
+      points="38,142 128,104 218,142 128,180"
+      fill="#050506"
+      stroke="#d66eff"
+      stroke-width="2.6"
+    />
+    <polygon
+      points="38,142 38,178 128,216 128,180"
+      fill="url(#purpleSide)"
+      stroke="#d66eff"
+      stroke-width="2.6"
+    />
+    <polygon
+      points="218,142 218,178 128,216 128,180"
+      fill="url(#purpleSide)"
+      stroke="#d66eff"
+      stroke-width="2.6"
+    />
+  </g>
+
+  <g filter="url(#glowGreen)">
+    <polygon
+      points="24,96 128,34 232,96 128,158"
+      fill="#020403"
+      stroke="#74ff7a"
+      stroke-width="2.8"
+    />
+    <polygon
+      points="24,96 24,136 128,198 128,158"
+      fill="url(#greenSide)"
+      stroke="#74ff7a"
+      stroke-width="2.8"
+    />
+    <polygon
+      points="232,96 232,136 128,198 128,158"
+      fill="url(#greenSide)"
+      stroke="#74ff7a"
+      stroke-width="2.8"
+    />
+
+    <g stroke="#7dff88" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M64 98 L128 60 L192 98" />
+      <path d="M64 98 L128 134 L192 98" />
+      <path d="M64 98 H192" />
+      <path d="M128 60 V134" />
+      <path d="M128 98 H128" />
+    </g>
+
+    <circle cx="128" cy="98" r="4.5" fill="#7dff88" />
+    <g transform="translate(128 60)">
+      <use href="#hexNode" />
+    </g>
+    <g transform="translate(64 98)">
+      <use href="#hexNode" />
+    </g>
+    <g transform="translate(192 98)">
+      <use href="#hexNode" />
+    </g>
+    <g transform="translate(128 134)">
+      <use href="#hexNode" />
+    </g>
+  </g>
 </svg>

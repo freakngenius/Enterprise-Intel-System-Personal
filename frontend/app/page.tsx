@@ -2917,7 +2917,11 @@ export default function Home() {
                       className="flex h-10 w-10 items-center justify-center border border-[#2c2a27] bg-[#181715] text-sm font-semibold text-[#f3f1ea]"
                       style={SURFACE_RADIUS_STYLE}
                     >
-                      EI
+                      <img
+                        alt="Enterprise Intel System logo"
+                        className="h-8 w-8 object-contain"
+                        src="/icon.svg"
+                      />
                     </div>
                     <div>
                       <p className="text-sm font-medium text-[#f3f1ea]">
