@@ -6,7 +6,9 @@ const DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8000";
 
 function buildBackendUrl(): URL {
   const backendBaseUrl =
-    process.env.ANALYZE_BACKEND_URL ?? DEFAULT_BACKEND_BASE_URL;
+    process.env.ANALYZE_BACKEND_URL ??
+    process.env.NEXT_PUBLIC_ANALYZE_BACKEND_URL ??
+    DEFAULT_BACKEND_BASE_URL;
   return new URL("/compare", backendBaseUrl);
 }
 
@@ -27,6 +29,9 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         Accept: "text/event-stream",
+        ...(request.headers.get("x-api-key")
+          ? { "X-API-Key": request.headers.get("x-api-key") as string }
+          : {}),
       },
       body: formData,
       cache: "no-store",

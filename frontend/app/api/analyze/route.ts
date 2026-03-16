@@ -6,12 +6,15 @@ const DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8000";
 
 function buildBackendUrl(request: NextRequest): URL {
   const backendBaseUrl =
-    process.env.ANALYZE_BACKEND_URL ?? DEFAULT_BACKEND_BASE_URL;
+    process.env.ANALYZE_BACKEND_URL ??
+    process.env.NEXT_PUBLIC_ANALYZE_BACKEND_URL ??
+    DEFAULT_BACKEND_BASE_URL;
   const url = new URL("/analyze", backendBaseUrl);
 
   const company = request.nextUrl.searchParams.get("company");
   const analysisRequest = request.nextUrl.searchParams.get("request");
   const companyUrl = request.nextUrl.searchParams.get("company_url");
+  const apiKey = request.nextUrl.searchParams.get("api_key");
 
   if (company) {
     url.searchParams.set("company", company);
@@ -23,6 +26,10 @@ function buildBackendUrl(request: NextRequest): URL {
 
   if (companyUrl) {
     url.searchParams.set("company_url", companyUrl);
+  }
+
+  if (apiKey) {
+    url.searchParams.set("api_key", apiKey);
   }
 
   return url;
@@ -43,6 +50,9 @@ export async function GET(request: NextRequest) {
     upstream = await fetch(buildBackendUrl(request), {
       headers: {
         Accept: "text/event-stream",
+        ...(request.headers.get("x-api-key")
+          ? { "X-API-Key": request.headers.get("x-api-key") as string }
+          : {}),
       },
       cache: "no-store",
     });

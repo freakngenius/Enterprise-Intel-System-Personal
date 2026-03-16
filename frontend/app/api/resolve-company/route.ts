@@ -6,7 +6,9 @@ const DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8000";
 
 function buildBackendUrl(): URL {
   const backendBaseUrl =
-    process.env.ANALYZE_BACKEND_URL ?? DEFAULT_BACKEND_BASE_URL;
+    process.env.ANALYZE_BACKEND_URL ??
+    process.env.NEXT_PUBLIC_ANALYZE_BACKEND_URL ??
+    DEFAULT_BACKEND_BASE_URL;
   return new URL("/resolve-company", backendBaseUrl);
 }
 
@@ -24,6 +26,9 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(request.headers.get("x-api-key")
+          ? { "X-API-Key": request.headers.get("x-api-key") as string }
+          : {}),
       },
       body: JSON.stringify(payload),
       cache: "no-store",

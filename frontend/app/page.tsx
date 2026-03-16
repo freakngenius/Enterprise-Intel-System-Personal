@@ -428,6 +428,36 @@ function parseTriageSelection(rawValue: string): TriageSelection | null {
   }
 }
 
+function getCompareSelectedSpecialists(
+  focusAreas: string[],
+  customFocus?: string | null,
+): SpecialistAgentId[] {
+  if (!focusAreas.length && !customFocus?.trim()) {
+    return SPECIALIST_AGENT_IDS.slice();
+  }
+
+  const selected = new Set<SpecialistAgentId>(["recon"]);
+
+  if (
+    focusAreas.includes("Business Model") ||
+    focusAreas.includes("Pricing Strategy") ||
+    focusAreas.includes("Company Size") ||
+    focusAreas.includes("Funds Raised & Stage")
+  ) {
+    selected.add("financial");
+  }
+
+  if (focusAreas.includes("Talent & Culture")) {
+    selected.add("people");
+  }
+
+  if (focusAreas.includes("Regulatory & Compliance")) {
+    selected.add("risk");
+  }
+
+  return SPECIALIST_AGENT_IDS.filter((agentId) => selected.has(agentId));
+}
+
 function normalizeUrlForContext(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -451,10 +481,18 @@ function getDisplayDomain(value: string): string {
   }
 }
 
-function buildAnalyzeUrl(company: string, request: string, companyUrl?: string): string {
+function buildAnalyzeUrl(
+  company: string,
+  request: string,
+  companyUrl?: string,
+  apiKey?: string,
+): string {
   const params = new URLSearchParams({ company, request });
   if (companyUrl?.trim()) {
     params.set("company_url", companyUrl.trim());
+  }
+  if (apiKey?.trim()) {
+    params.set("api_key", apiKey.trim());
   }
   return `/api/analyze?${params.toString()}`;
 }
@@ -1267,7 +1305,16 @@ export default function Home() {
             : [],
         )
       : compareRosterActivated
-        ? new Set<AgentId>(COMPARE_ROSTER_IDS)
+        ? new Set<AgentId>(
+            [
+              "context",
+              "research",
+              "comparison",
+              "synthesis",
+              "chart",
+              ...selectedSpecialists,
+            ] as AgentId[],
+          )
         : new Set<AgentId>();
 
   const contextCardState: AgentCardState = activeAgents.has("context")
@@ -1567,11 +1614,9 @@ export default function Home() {
     setFocusAgent(nextMode === "intel" ? "triage" : "context");
     setCompletedAgents(new Set());
     setActiveAgents(new Set());
-    setSelectedSpecialists(
-      nextMode === "intel" ? [] : SPECIALIST_AGENT_IDS.slice(),
-    );
+    setSelectedSpecialists([]);
     setTriageReasoning("");
-    setSelectedSpecialistTab(nextMode === "intel" ? null : "recon");
+    setSelectedSpecialistTab(null);
     setSpecialistOutputs(createEmptySpecialistOutputs());
     setSpecialistPanelCollapsed(false);
     setContextOutput("");
@@ -1972,6 +2017,9 @@ export default function Home() {
       }
       recordAgentUsed(agentId);
       markAgentActive(agentId);
+      setSelectedSpecialists((current) =>
+        current.includes(agentId) ? current : [...current, agentId],
+      );
       setSelectedSpecialistTab(agentId);
       return;
     }
@@ -2136,6 +2184,7 @@ export default function Home() {
         method: "POST",
         headers: {
           Accept: "text/event-stream",
+          ...(storedApiKey ? { "X-API-Key": storedApiKey } : {}),
         },
         body: formData,
         signal: controller.signal,
@@ -2200,6 +2249,7 @@ export default function Home() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(storedApiKey ? { "X-API-Key": storedApiKey } : {}),
       },
       body: JSON.stringify({
         company_name: companyName,
@@ -2220,7 +2270,12 @@ export default function Home() {
     beginIntelRosterSequence();
 
     const source = new EventSource(
-      buildAnalyzeUrl(run.company, run.request, run.companyUrl ?? undefined),
+      buildAnalyzeUrl(
+        run.company,
+        run.request,
+        run.companyUrl ?? undefined,
+        storedApiKey || undefined,
+      ),
     );
     sourceRef.current = source;
 
@@ -2277,9 +2332,13 @@ export default function Home() {
 
   function startCompareRun(run: PendingCompareRun) {
     prepareNewRun("compare");
+    const selectedAgents = getCompareSelectedSpecialists(
+      run.focusAreas,
+      run.customFocus,
+    );
+    setSelectedSpecialists(selectedAgents);
+    setSelectedSpecialistTab(selectedAgents[0] ?? null);
     beginCompareRosterSequence();
-    setSelectedSpecialists(SPECIALIST_AGENT_IDS.slice());
-    setSelectedSpecialistTab("recon");
 
     const formData = new FormData();
     formData.set("base_company", run.baseCompany);

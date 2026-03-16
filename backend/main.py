@@ -7,7 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from agents import Agent, Runner
+from agents import Agent, OpenAIProvider, RunConfig, Runner
 from docx import Document
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
@@ -127,11 +127,43 @@ def format_sse(event: str, data: Any) -> str:
 
 
 def build_openai_client(api_key: str | None = None) -> OpenAI:
-    resolved_api_key = (api_key or "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+    resolved_api_key = resolve_openai_api_key(api_key)
     if not resolved_api_key:
         raise RuntimeError("OpenAI API key is required for company resolution.")
 
     return OpenAI(api_key=resolved_api_key)
+
+
+def resolve_openai_api_key(api_key: str | None = None) -> str | None:
+    resolved_api_key = (api_key or "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+    return resolved_api_key or None
+
+
+def build_run_config(api_key: str | None = None) -> RunConfig | None:
+    resolved_api_key = resolve_openai_api_key(api_key)
+    if not resolved_api_key:
+        return None
+
+    return RunConfig(
+        model_provider=OpenAIProvider(api_key=resolved_api_key),
+        tracing={"api_key": resolved_api_key},
+    )
+
+
+async def run_agent(agent: Agent, input_text: str, api_key: str | None = None) -> Any:
+    run_config = build_run_config(api_key)
+    if run_config is not None:
+        return await Runner.run(agent, input=input_text, run_config=run_config)
+
+    return await Runner.run(agent, input=input_text)
+
+
+def run_streamed_agent(agent: Agent, input_text: str, api_key: str | None = None) -> Any:
+    run_config = build_run_config(api_key)
+    if run_config is not None:
+        return Runner.run_streamed(agent, input=input_text, run_config=run_config)
+
+    return Runner.run_streamed(agent, input=input_text)
 
 
 def extract_usage(result: Any) -> dict[str, int]:
@@ -175,6 +207,7 @@ async def build_chart_payload(
     research_output: str,
     synthesis_output: str,
     comparison_output: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[str, Any | None]:
     prompt_parts = [
         "You have just completed a full intelligence analysis. Extract visualization data from this:",
@@ -203,7 +236,11 @@ async def build_chart_payload(
     )
 
     try:
-        chart_result = await Runner.run(chart_agent, input="\n".join(prompt_parts))
+        chart_result = await run_agent(
+            chart_agent,
+            input_text="\n".join(prompt_parts),
+            api_key=api_key,
+        )
     except Exception as exc:
         print(f"[CHART_AGENT] Runner failed: {exc}")
         return "{}", None
@@ -437,6 +474,25 @@ def build_compare_focus_instruction_map(
     }
 
 
+def select_compare_specialists(
+    focus_areas: list[str], custom_focus: str | None
+) -> list[str]:
+    if not focus_areas and not (custom_focus and custom_focus.strip()):
+        return COMPARISON_SPECIALIST_AGENT_ORDER[:]
+
+    compare_focus_instruction_map = build_compare_focus_instruction_map(
+        focus_areas,
+        custom_focus,
+    )
+    selected_agents = ["recon"]
+
+    for agent_key in COMPARISON_SPECIALIST_AGENT_ORDER:
+        if agent_key in compare_focus_instruction_map and agent_key not in selected_agents:
+            selected_agents.append(agent_key)
+
+    return selected_agents
+
+
 def build_runtime_agent(base_agent: Agent, extra_instructions: str | None) -> Agent:
     if not extra_instructions or not extra_instructions.strip():
         return base_agent
@@ -535,10 +591,13 @@ async def run_specialist_agent(
     payload: AnalyzeRequest,
     queue: asyncio.Queue[tuple[str, Any]],
     agent: Agent | None = None,
+    api_key: str | None = None,
 ) -> AgentRunCapture:
     specialist_agent = agent or SPECIALIST_AGENTS[agent_key]
-    streamed_result = Runner.run_streamed(
-        specialist_agent, input=build_specialist_prompt(agent_key, payload)
+    streamed_result = run_streamed_agent(
+        specialist_agent,
+        input_text=build_specialist_prompt(agent_key, payload),
+        api_key=api_key,
     )
     output = ""
 
@@ -628,12 +687,18 @@ Mode: {mode}""",
     return await asyncio.to_thread(_run_completion)
 
 
-async def stream_analysis(payload: AnalyzeRequest) -> AsyncIterator[str]:
+async def stream_analysis(
+    payload: AnalyzeRequest, api_key: str | None = None
+) -> AsyncIterator[str]:
     yield format_sse("status", f"Starting analysis for {payload.company}.")
     yield format_sse("status", "Triage agent is analyzing the request.")
 
     try:
-        triage_result = await Runner.run(triage_agent, input=build_triage_prompt(payload))
+        triage_result = await run_agent(
+            triage_agent,
+            input_text=build_triage_prompt(payload),
+            api_key=api_key,
+        )
         triage_selection = parse_triage_output(triage_result.final_output)
     except Exception as exc:
         yield format_sse("server-error", f"Triage failed: {exc}")
@@ -655,6 +720,7 @@ async def stream_analysis(payload: AnalyzeRequest) -> AsyncIterator[str]:
                     payload,
                     specialist_queue,
                     agent=build_specialist_runtime_agent(agent_key, payload),
+                    api_key=api_key,
                 )
             )
         )
@@ -682,9 +748,10 @@ async def stream_analysis(payload: AnalyzeRequest) -> AsyncIterator[str]:
     yield format_sse("delta", HANDOFF_RESEARCH_TOKEN)
     yield format_sse("status", "Research agent is synthesizing specialist findings.")
 
-    research_result = Runner.run_streamed(
+    research_result = run_streamed_agent(
         research_agent,
-        input=build_research_prompt(payload, triage_selection, specialist_context),
+        input_text=build_research_prompt(payload, triage_selection, specialist_context),
+        api_key=api_key,
     )
     research_text = ""
 
@@ -707,9 +774,10 @@ async def stream_analysis(payload: AnalyzeRequest) -> AsyncIterator[str]:
     yield format_sse("delta", HANDOFF_SYNTHESIS_TOKEN)
     yield format_sse("status", "Synthesis agent is preparing the executive brief.")
 
-    synthesis_result = Runner.run_streamed(
+    synthesis_result = run_streamed_agent(
         synthesis_agent,
-        input=build_synthesis_prompt(payload, research_text.strip()),
+        input_text=build_synthesis_prompt(payload, research_text.strip()),
+        api_key=api_key,
     )
     synthesis_text = ""
 
@@ -737,6 +805,7 @@ async def stream_analysis(payload: AnalyzeRequest) -> AsyncIterator[str]:
         company=payload.company,
         research_output=research_text,
         synthesis_output=synthesis_text,
+        api_key=api_key,
     )
     yield format_sse("delta", "[AGENT_DONE_chart]")
     yield f"data: {CHART_DATA_TOKEN}{chart_payload}\n\n"
@@ -762,6 +831,7 @@ async def stream_comparison_analysis(
     focus_areas: list[str] | None,
     custom_focus: str | None,
     files: list[UploadFile] | None,
+    api_key: str | None = None,
 ) -> AsyncIterator[str]:
     yield format_sse(
         "status",
@@ -785,13 +855,18 @@ async def stream_comparison_analysis(
     compare_focus_instruction_map = build_compare_focus_instruction_map(
         normalized_focus_areas, custom_focus
     )
+    selected_specialist_agents = select_compare_specialists(
+        normalized_focus_areas,
+        custom_focus,
+    )
 
     yield format_sse("delta", "[AGENT_START_context]")
     yield format_sse("status", "Context agent is building the base company profile.")
 
-    context_result = Runner.run_streamed(
+    context_result = run_streamed_agent(
         context_agent,
-        input=build_context_prompt(base_company, base_url, docs_context),
+        input_text=build_context_prompt(base_company, base_url, docs_context),
+        api_key=api_key,
     )
     context_output = ""
 
@@ -827,7 +902,7 @@ async def stream_comparison_analysis(
     specialist_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
     specialist_tasks: list[asyncio.Task[AgentRunCapture]] = []
 
-    for agent_key in COMPARISON_SPECIALIST_AGENT_ORDER:
+    for agent_key in selected_specialist_agents:
         yield format_sse("delta", f"[AGENT_START_{agent_key}]")
         runtime_agent = build_specialist_runtime_agent(
             agent_key,
@@ -841,6 +916,7 @@ async def stream_comparison_analysis(
                     compare_request,
                     specialist_queue,
                     agent=runtime_agent,
+                    api_key=api_key,
                 )
             )
         )
@@ -862,20 +938,21 @@ async def stream_comparison_analysis(
         return
 
     competitor_context = build_specialist_context(
-        specialist_captures, COMPARISON_SPECIALIST_AGENT_ORDER
+        specialist_captures, selected_specialist_agents
     )
 
     yield format_sse("delta", HANDOFF_RESEARCH_TOKEN)
     yield format_sse("status", "Research agent is building competitor intelligence.")
 
-    research_result = Runner.run_streamed(
+    research_result = run_streamed_agent(
         research_agent,
-        input=f"""Company: {competitor_company}
+        input_text=f"""Company: {competitor_company}
 Request: Build a competitor intelligence memo that will support a head-to-head comparison with {base_company}.
 
 {competitor_context}
 
 Create the structured competitor research memo using only the available specialist outputs.""",
+        api_key=api_key,
     )
     research_text = ""
 
@@ -898,9 +975,9 @@ Create the structured competitor research memo using only the available speciali
     yield format_sse("delta", HANDOFF_COMPARISON_TOKEN)
     yield format_sse("status", "Comparison agent is generating the head-to-head analysis.")
 
-    comparison_result = Runner.run_streamed(
+    comparison_result = run_streamed_agent(
         comparison_agent,
-        input=build_comparison_prompt(
+        input_text=build_comparison_prompt(
             base_company=base_company,
             competitor_company=competitor_company,
             base_profile=build_base_company_context(
@@ -912,6 +989,7 @@ Create the structured competitor research memo using only the available speciali
             competitor_research_memo=research_text.strip(),
             focus_summary=focus_summary,
         ),
+        api_key=api_key,
     )
     comparison_text = ""
 
@@ -936,13 +1014,14 @@ Create the structured competitor research memo using only the available speciali
     yield format_sse("delta", HANDOFF_SYNTHESIS_TOKEN)
     yield format_sse("status", "Synthesis agent is preparing the final comparison report.")
 
-    synthesis_result = Runner.run_streamed(
+    synthesis_result = run_streamed_agent(
         synthesis_agent,
-        input=build_comparison_synthesis_prompt(
+        input_text=build_comparison_synthesis_prompt(
             base_company=base_company,
             competitor_company=competitor_company,
             comparison_report=comparison_text.strip(),
         ),
+        api_key=api_key,
     )
     synthesis_text = ""
 
@@ -971,6 +1050,7 @@ Create the structured competitor research memo using only the available speciali
         research_output=research_text,
         comparison_output=comparison_text,
         synthesis_output=synthesis_text,
+        api_key=api_key,
     )
     yield format_sse("delta", "[AGENT_DONE_chart]")
     yield f"data: {CHART_DATA_TOKEN}{chart_payload}\n\n"
@@ -1009,6 +1089,7 @@ def comparison_sse_response(
     focus_areas: list[str] | None,
     custom_focus: str | None,
     files: list[UploadFile] | None,
+    api_key: str | None = None,
 ) -> StreamingResponse:
     return StreamingResponse(
         stream_comparison_analysis(
@@ -1019,6 +1100,7 @@ def comparison_sse_response(
             focus_areas=focus_areas,
             custom_focus=custom_focus,
             files=files,
+            api_key=api_key,
         ),
         media_type="text/event-stream",
         headers={
@@ -1030,8 +1112,16 @@ def comparison_sse_response(
 
 
 @app.post("/analyze")
-async def analyze(payload: AnalyzeRequest) -> StreamingResponse:
-    return sse_response(payload)
+async def analyze(payload: AnalyzeRequest, request: Request) -> StreamingResponse:
+    return StreamingResponse(
+        stream_analysis(payload, api_key=request.headers.get("X-API-Key")),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/analyze")
@@ -1039,12 +1129,25 @@ async def analyze_via_event_source(
     company: str = Query(..., min_length=1, max_length=200),
     request: str = Query(..., min_length=1, max_length=4000),
     company_url: str | None = Query(default=None, max_length=500),
+    api_key: str | None = Query(default=None, max_length=500),
 ) -> StreamingResponse:
-    return sse_response(AnalyzeRequest(company=company, request=request, company_url=company_url))
+    return StreamingResponse(
+        stream_analysis(
+            AnalyzeRequest(company=company, request=request, company_url=company_url),
+            api_key=api_key,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/compare")
 async def compare(
+    request: Request,
     base_company: str = Form(...),
     competitor_company: str = Form(...),
     base_url: str | None = Form(default=None),
@@ -1061,6 +1164,7 @@ async def compare(
         focus_areas=focus_areas,
         custom_focus=custom_focus,
         files=files,
+        api_key=request.headers.get("X-API-Key"),
     )
 
 
