@@ -17,14 +17,14 @@ from openai.types.responses import ResponseTextDeltaEvent
 from pypdf import PdfReader
 from pydantic import BaseModel, Field
 
-from backend.intel_agents import (
+from intel_agents import (
     SPECIALIST_AGENTS,
     chart_agent,
     research_agent,
     synthesis_agent,
     triage_agent,
 )
-from backend.comparison_agents import comparison_agent, context_agent
+from comparison_agents import comparison_agent, context_agent
 
 load_dotenv(Path(__file__).with_name(".env"))
 openai_client = OpenAI()
